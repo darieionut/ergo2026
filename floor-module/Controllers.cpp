@@ -59,7 +59,8 @@ SRAMController::SRAMController(EEPROMController *eepr) {
 }
 
 void SRAMController::setup() {
-    sram = new MicrochipSRAM(HW_SPI_CS_SRAM_PIN, SRAM_64);
+    delay(200);
+    sram = new MicrochipSRAM(HW_SPI_CS_SRAM_PIN, SRAM_512);
 }
 
 uint32_t SRAMController::getSRAMType() {
@@ -87,36 +88,21 @@ int16_t SRAMController::addAlarm(AlarmEntry *alarm, boolean isUpdateOnly) {
 }
 
 int16_t SRAMController::addAlarm(AlarmEntry *alarm, boolean isUpdateOnly, boolean isStartup) {
-    // Check if alarm already exists
-    index = findAlarm(alarm->address);
-
-    if (index >= 0) {
-        // Update existing alarm
-        sram->get(SRAM_ALARMS_MEMORY_START + (index * SRAM_ALARMS_MEMORY_SEGMENT_SIZE) + 4, lastState);
-        isStateChange = (lastState != alarm->state);
-
-        if (isStateChange || isStartup) {
+    index = SRAM_ALARMS_MEMORY_START + numberOfAlarms * SRAM_ALARMS_MEMORY_SEGMENT_SIZE;
+    if(index + SRAM_ALARMS_MEMORY_SEGMENT_SIZE <= SRAM_ALARMS_MEMORY_END) {
+        foundElement = false;
+        isStateChange = false;
+        for(i=SRAM_ALARMS_MEMORY_START; i<index; i+=SRAM_ALARMS_MEMORY_SEGMENT_SIZE) {
+            sram->get(i, comparatorAuxBuffer);
             convertBytesToUInt.intVal = alarm->address;
-            alarmAuxBuffer[0] = convertBytesToUInt.byte[0];
-            alarmAuxBuffer[1] = convertBytesToUInt.byte[1];
-            convertBytesToUInt.intVal = alarm->id;
-            alarmAuxBuffer[2] = convertBytesToUInt.byte[0];
-            alarmAuxBuffer[3] = convertBytesToUInt.byte[1];
-            alarmAuxBuffer[4] = alarm->state;
-
-            for (i = 0; i < 5; i++) {
-                sram->put(SRAM_ALARMS_MEMORY_START + (index * SRAM_ALARMS_MEMORY_SEGMENT_SIZE) + i, alarmAuxBuffer[i]);
+            if(convertBytesToUInt.byte[0] == comparatorAuxBuffer[0] && convertBytesToUInt.byte[1] == comparatorAuxBuffer[1]) {
+                foundElement = true;
+                sram->get(i+4, lastState);
+                if(alarm->state != lastState) isStateChange = true;
+                break;
             }
         }
-        return index;
-    }
 
-    if (isUpdateOnly) {
-        return -1;
-    }
-
-    // Add new alarm
-    if (numberOfAlarms < (SRAM_ALARMS_MEMORY_END - SRAM_ALARMS_MEMORY_START) / SRAM_ALARMS_MEMORY_SEGMENT_SIZE) {
         convertBytesToUInt.intVal = alarm->address;
         alarmAuxBuffer[0] = convertBytesToUInt.byte[0];
         alarmAuxBuffer[1] = convertBytesToUInt.byte[1];
@@ -125,23 +111,29 @@ int16_t SRAMController::addAlarm(AlarmEntry *alarm, boolean isUpdateOnly, boolea
         alarmAuxBuffer[3] = convertBytesToUInt.byte[1];
         alarmAuxBuffer[4] = alarm->state;
 
-        for (i = 0; i < 5; i++) {
-            sram->put(SRAM_ALARMS_MEMORY_START + (numberOfAlarms * SRAM_ALARMS_MEMORY_SEGMENT_SIZE) + i, alarmAuxBuffer[i]);
+        if(!foundElement && !isUpdateOnly) {
+
+            if(!isStartup) eepr->addAlarm(alarm);
+            sram->put(index, alarmAuxBuffer);
+            numberOfAlarms++;
+            return -1;
+        } else {
+
+            sram->put(i, alarmAuxBuffer);
+            if(isStateChange && alarm->state) {
+                return -3;
+            } else {
+                return (i-SRAM_ALARMS_MEMORY_START)/SRAM_ALARMS_MEMORY_SEGMENT_SIZE;
+            }
         }
-
-        numberOfAlarms++;
-        return numberOfAlarms - 1;
     }
-
-    return -1;
+    return -2;
 }
 
 boolean SRAMController::getAlarm(AlarmEntry *alarm, uint16_t elemIndex) {
-    if (elemIndex < numberOfAlarms) {
-        for (i = 0; i < 5; i++) {
-            sram->get(SRAM_ALARMS_MEMORY_START + (elemIndex * SRAM_ALARMS_MEMORY_SEGMENT_SIZE) + i, alarmAuxBuffer[i]);
-        }
-
+    if(elemIndex >= 0 && elemIndex < numberOfAlarms) {
+        index = SRAM_ALARMS_MEMORY_START + elemIndex * SRAM_ALARMS_MEMORY_SEGMENT_SIZE;
+        sram->get(index, alarmAuxBuffer);
         convertBytesToUInt.byte[0] = alarmAuxBuffer[0];
         convertBytesToUInt.byte[1] = alarmAuxBuffer[1];
         alarm->address = convertBytesToUInt.intVal;
@@ -149,37 +141,33 @@ boolean SRAMController::getAlarm(AlarmEntry *alarm, uint16_t elemIndex) {
         convertBytesToUInt.byte[1] = alarmAuxBuffer[3];
         alarm->id = convertBytesToUInt.intVal;
         alarm->state = alarmAuxBuffer[4];
-
         return true;
     }
     return false;
 }
 
 int16_t SRAMController::findAlarm(uint16_t address) {
-    convertBytesToUInt.intVal = address;
-    comparatorAuxBuffer[0] = convertBytesToUInt.byte[0];
-    comparatorAuxBuffer[1] = convertBytesToUInt.byte[1];
-
-    for (j = 0; j < numberOfAlarms; j++) {
-        sram->get(SRAM_ALARMS_MEMORY_START + (j * SRAM_ALARMS_MEMORY_SEGMENT_SIZE), alarmAuxBuffer[0]);
-        sram->get(SRAM_ALARMS_MEMORY_START + (j * SRAM_ALARMS_MEMORY_SEGMENT_SIZE) + 1, alarmAuxBuffer[1]);
-
-        if (alarmAuxBuffer[0] == comparatorAuxBuffer[0] && alarmAuxBuffer[1] == comparatorAuxBuffer[1]) {
-            return j;
+    index = SRAM_ALARMS_MEMORY_START + numberOfAlarms * SRAM_ALARMS_MEMORY_SEGMENT_SIZE;
+    if(index + SRAM_ALARMS_MEMORY_SEGMENT_SIZE <= SRAM_ALARMS_MEMORY_END) {
+        for(i=SRAM_ALARMS_MEMORY_START; i<index; i+=SRAM_ALARMS_MEMORY_SEGMENT_SIZE) {
+            sram->get(i, comparatorAuxBuffer);
+            convertBytesToUInt.intVal = address;
+            if(convertBytesToUInt.byte[0] == comparatorAuxBuffer[0] && convertBytesToUInt.byte[1] == comparatorAuxBuffer[1]) {
+                return (i - SRAM_ALARMS_MEMORY_START) / SRAM_ALARMS_MEMORY_SEGMENT_SIZE;
+            }
         }
     }
-
     return -1;
 }
 
 boolean SRAMController::deleteAlarm(uint16_t elemIndex) {
-    if (elemIndex < numberOfAlarms) {
-        // Move last element to deleted position
-        if (elemIndex + 1 != numberOfAlarms) {
-            for (i = 0; i < 5; i++) {
-                sram->get(SRAM_ALARMS_MEMORY_START + ((numberOfAlarms - 1) * SRAM_ALARMS_MEMORY_SEGMENT_SIZE) + i, alarmAuxBuffer[i]);
-                sram->put(SRAM_ALARMS_MEMORY_START + (elemIndex * SRAM_ALARMS_MEMORY_SEGMENT_SIZE) + i, alarmAuxBuffer[i]);
-            }
+    if(elemIndex >= 0 && numberOfAlarms > 0 && elemIndex < numberOfAlarms) {
+        index = SRAM_ALARMS_MEMORY_START + elemIndex * SRAM_ALARMS_MEMORY_SEGMENT_SIZE;
+        if(elemIndex+1 != numberOfAlarms) {
+
+            i = SRAM_ALARMS_MEMORY_START + (numberOfAlarms-1) * SRAM_ALARMS_MEMORY_SEGMENT_SIZE;
+            sram->get(i, alarmAuxBuffer);
+            sram->put(index, alarmAuxBuffer);
         }
         numberOfAlarms--;
         return true;
@@ -197,11 +185,18 @@ boolean SRAMController::clearAlarms() {
 // ============================================================================
 
 int16_t SRAMController::addDetector(DetectorEntry *detector) {
-    // Check if detector already exists
-    index = findDetector(detector->address);
+    index = SRAM_DETECTORS_MEMORY_START + numberOfDetectors * SRAM_DETECTORS_MEMORY_SEGMENT_SIZE;
+    if(index + SRAM_DETECTORS_MEMORY_SEGMENT_SIZE <= SRAM_DETECTORS_MEMORY_END) {
+        foundElement = false;
+        for(i=SRAM_DETECTORS_MEMORY_START; i<index; i+=SRAM_DETECTORS_MEMORY_SEGMENT_SIZE) {
+            sram->get(i, comparatorAuxBuffer);
+            convertBytesToUInt.intVal = detector->address;
+            if(convertBytesToUInt.byte[0] == comparatorAuxBuffer[0] && convertBytesToUInt.byte[1] == comparatorAuxBuffer[1]) {
+                foundElement = true;
+                break;
+            }
+        }
 
-    if (index >= 0) {
-        // Update existing detector
         convertBytesToUInt.intVal = detector->address;
         detectorAuxBuffer[0] = convertBytesToUInt.byte[0];
         detectorAuxBuffer[1] = convertBytesToUInt.byte[1];
@@ -216,46 +211,24 @@ int16_t SRAMController::addDetector(DetectorEntry *detector) {
         detectorAuxBuffer[8] = convertBytesToULong.byte[2];
         detectorAuxBuffer[9] = convertBytesToULong.byte[3];
 
-        for (i = 0; i < 10; i++) {
-            sram->put(SRAM_DETECTORS_MEMORY_START + (index * SRAM_DETECTORS_MEMORY_SEGMENT_SIZE) + i, detectorAuxBuffer[i]);
+        if(!foundElement) {
+
+            sram->put(index, detectorAuxBuffer);
+            numberOfDetectors++;
+            return -1;
+        } else {
+
+            sram->put(i, detectorAuxBuffer);
+            return (i-SRAM_DETECTORS_MEMORY_START)/SRAM_DETECTORS_MEMORY_SEGMENT_SIZE;
         }
-
-        return index;
     }
-
-    // Add new detector
-    if (numberOfDetectors < (SRAM_DETECTORS_MEMORY_END - SRAM_DETECTORS_MEMORY_START) / SRAM_DETECTORS_MEMORY_SEGMENT_SIZE) {
-        convertBytesToUInt.intVal = detector->address;
-        detectorAuxBuffer[0] = convertBytesToUInt.byte[0];
-        detectorAuxBuffer[1] = convertBytesToUInt.byte[1];
-        convertBytesToUInt.intVal = detector->id;
-        detectorAuxBuffer[2] = convertBytesToUInt.byte[0];
-        detectorAuxBuffer[3] = convertBytesToUInt.byte[1];
-        detectorAuxBuffer[4] = detector->linkQuality;
-        detectorAuxBuffer[5] = detector->status;
-        convertBytesToULong.longVal = detector->lastUpdateMs;
-        detectorAuxBuffer[6] = convertBytesToULong.byte[0];
-        detectorAuxBuffer[7] = convertBytesToULong.byte[1];
-        detectorAuxBuffer[8] = convertBytesToULong.byte[2];
-        detectorAuxBuffer[9] = convertBytesToULong.byte[3];
-
-        for (i = 0; i < 10; i++) {
-            sram->put(SRAM_DETECTORS_MEMORY_START + (numberOfDetectors * SRAM_DETECTORS_MEMORY_SEGMENT_SIZE) + i, detectorAuxBuffer[i]);
-        }
-
-        numberOfDetectors++;
-        return numberOfDetectors - 1;
-    }
-
-    return -1;
+    return -2;
 }
 
-boolean SRAMController::getDetector(DetectorEntry *detector, uint16_t elemIndex) {
-    if (elemIndex < numberOfDetectors) {
-        for (i = 0; i < 10; i++) {
-            sram->get(SRAM_DETECTORS_MEMORY_START + (elemIndex * SRAM_DETECTORS_MEMORY_SEGMENT_SIZE) + i, detectorAuxBuffer[i]);
-        }
-
+boolean SRAMController::getDetector(DetectorEntry* detector, uint16_t elemIndex) {
+    if(elemIndex >= 0 && elemIndex < numberOfDetectors) {
+        index = SRAM_DETECTORS_MEMORY_START + elemIndex * SRAM_DETECTORS_MEMORY_SEGMENT_SIZE;
+        sram->get(index, detectorAuxBuffer);
         convertBytesToUInt.byte[0] = detectorAuxBuffer[0];
         convertBytesToUInt.byte[1] = detectorAuxBuffer[1];
         detector->address = convertBytesToUInt.intVal;
@@ -269,36 +242,33 @@ boolean SRAMController::getDetector(DetectorEntry *detector, uint16_t elemIndex)
         convertBytesToULong.byte[2] = detectorAuxBuffer[8];
         convertBytesToULong.byte[3] = detectorAuxBuffer[9];
         detector->lastUpdateMs = convertBytesToULong.longVal;
-
         return true;
     }
     return false;
 }
 
 int16_t SRAMController::findDetector(uint16_t address) {
-    convertBytesToUInt.intVal = address;
-    comparatorAuxBuffer[0] = convertBytesToUInt.byte[0];
-    comparatorAuxBuffer[1] = convertBytesToUInt.byte[1];
-
-    for (j = 0; j < numberOfDetectors; j++) {
-        sram->get(SRAM_DETECTORS_MEMORY_START + (j * SRAM_DETECTORS_MEMORY_SEGMENT_SIZE), detectorAuxBuffer[0]);
-        sram->get(SRAM_DETECTORS_MEMORY_START + (j * SRAM_DETECTORS_MEMORY_SEGMENT_SIZE) + 1, detectorAuxBuffer[1]);
-
-        if (detectorAuxBuffer[0] == comparatorAuxBuffer[0] && detectorAuxBuffer[1] == comparatorAuxBuffer[1]) {
-            return j;
+    index = SRAM_DETECTORS_MEMORY_START + numberOfDetectors * SRAM_DETECTORS_MEMORY_SEGMENT_SIZE;
+    if(index + SRAM_DETECTORS_MEMORY_SEGMENT_SIZE <= SRAM_DETECTORS_MEMORY_END) {
+        for(i=SRAM_DETECTORS_MEMORY_START; i<index; i+=SRAM_DETECTORS_MEMORY_SEGMENT_SIZE) {
+            sram->get(i, comparatorAuxBuffer);
+            convertBytesToUInt.intVal = address;
+            if(convertBytesToUInt.byte[0] == comparatorAuxBuffer[0] && convertBytesToUInt.byte[1] == comparatorAuxBuffer[1]) {
+                return (i - SRAM_DETECTORS_MEMORY_START) / SRAM_DETECTORS_MEMORY_SEGMENT_SIZE;
+            }
         }
     }
-
     return -1;
 }
 
 boolean SRAMController::deleteDetector(uint16_t elemIndex) {
-    if (elemIndex < numberOfDetectors) {
-        if (elemIndex + 1 != numberOfDetectors) {
-            for (i = 0; i < 10; i++) {
-                sram->get(SRAM_DETECTORS_MEMORY_START + ((numberOfDetectors - 1) * SRAM_DETECTORS_MEMORY_SEGMENT_SIZE) + i, detectorAuxBuffer[i]);
-                sram->put(SRAM_DETECTORS_MEMORY_START + (elemIndex * SRAM_DETECTORS_MEMORY_SEGMENT_SIZE) + i, detectorAuxBuffer[i]);
-            }
+    if(elemIndex >= 0 && numberOfDetectors > 0 && elemIndex < numberOfDetectors) {
+        index = SRAM_DETECTORS_MEMORY_START + elemIndex * SRAM_DETECTORS_MEMORY_SEGMENT_SIZE;
+        if(elemIndex+1 != numberOfDetectors) {
+
+            i = SRAM_DETECTORS_MEMORY_START + (numberOfDetectors-1) * SRAM_DETECTORS_MEMORY_SEGMENT_SIZE;
+            sram->get(i, detectorAuxBuffer);
+            sram->put(index, detectorAuxBuffer);
         }
         numberOfDetectors--;
         return true;
@@ -316,67 +286,68 @@ boolean SRAMController::clearDetectors() {
 // ============================================================================
 
 int16_t SRAMController::addOfflineDetector(OfflineDetectorEntry *offlineDetector) {
-    // Check if already exists
-    if (findOfflineDetector(offlineDetector->detectorEntryIndex) >= 0) {
-        return -1;
-    }
-
-    if (numberOfOfflineDetectors < (SRAM_OFFLINE_DETECTORS_MEMORY_END - SRAM_OFFLINE_DETECTORS_MEMORY_START) / SRAM_OFFLINE_DETECTORS_MEMORY_SEGMENT_SIZE) {
-        convertBytesToUInt.intVal = offlineDetector->detectorEntryIndex;
-        offlineDetectorAuxBuffer[0] = convertBytesToUInt.byte[0];
-        offlineDetectorAuxBuffer[1] = convertBytesToUInt.byte[1];
-
-        for (i = 0; i < 2; i++) {
-            sram->put(SRAM_OFFLINE_DETECTORS_MEMORY_START + (numberOfOfflineDetectors * SRAM_OFFLINE_DETECTORS_MEMORY_SEGMENT_SIZE) + i, offlineDetectorAuxBuffer[i]);
+    index = SRAM_OFFLINE_DETECTORS_MEMORY_START + numberOfOfflineDetectors * SRAM_OFFLINE_DETECTORS_MEMORY_SEGMENT_SIZE;
+    if(index + SRAM_OFFLINE_DETECTORS_MEMORY_SEGMENT_SIZE <= SRAM_OFFLINE_DETECTORS_MEMORY_END) {
+        foundElement = false;
+        for(i=SRAM_OFFLINE_DETECTORS_MEMORY_START; i<index; i+=SRAM_OFFLINE_DETECTORS_MEMORY_SEGMENT_SIZE) {
+            sram->get(i, offlineDetectorAuxBuffer);
+            convertBytesToUInt.byte[0] = offlineDetectorAuxBuffer[0];
+            convertBytesToUInt.byte[1] = offlineDetectorAuxBuffer[1];
+            if(convertBytesToUInt.intVal == offlineDetector->detectorEntryIndex) {
+                foundElement = true;
+                break;
+            }
         }
+        if(!foundElement) {
 
-        numberOfOfflineDetectors++;
-        return numberOfOfflineDetectors - 1;
+            convertBytesToUInt.intVal = offlineDetector->detectorEntryIndex;
+            offlineDetectorAuxBuffer[0] = convertBytesToUInt.byte[0];
+            offlineDetectorAuxBuffer[1] = convertBytesToUInt.byte[1];
+            sram->put(index, offlineDetectorAuxBuffer);
+            numberOfOfflineDetectors++;
+            return -1;
+        } else {
+            return (i-SRAM_OFFLINE_DETECTORS_MEMORY_START)/SRAM_OFFLINE_DETECTORS_MEMORY_SEGMENT_SIZE;
+        }
     }
-
-    return -1;
+    return -2;
 }
 
-boolean SRAMController::getOfflineDetector(OfflineDetectorEntry *offlineDetector, uint16_t elemIndex) {
-    if (elemIndex < numberOfOfflineDetectors) {
-        for (i = 0; i < 2; i++) {
-            sram->get(SRAM_OFFLINE_DETECTORS_MEMORY_START + (elemIndex * SRAM_OFFLINE_DETECTORS_MEMORY_SEGMENT_SIZE) + i, offlineDetectorAuxBuffer[i]);
-        }
-
+boolean SRAMController::getOfflineDetector(OfflineDetectorEntry* offlineDetector, uint16_t elemIndex) {
+    if(elemIndex >= 0 && elemIndex < numberOfOfflineDetectors) {
+        index = SRAM_OFFLINE_DETECTORS_MEMORY_START + elemIndex * SRAM_OFFLINE_DETECTORS_MEMORY_SEGMENT_SIZE;
+        sram->get(index, offlineDetectorAuxBuffer);
         convertBytesToUInt.byte[0] = offlineDetectorAuxBuffer[0];
         convertBytesToUInt.byte[1] = offlineDetectorAuxBuffer[1];
         offlineDetector->detectorEntryIndex = convertBytesToUInt.intVal;
-
         return true;
     }
     return false;
 }
 
 int16_t SRAMController::findOfflineDetector(uint16_t detectorEntryIndex) {
-    convertBytesToUInt.intVal = detectorEntryIndex;
-    comparatorAuxBuffer[0] = convertBytesToUInt.byte[0];
-    comparatorAuxBuffer[1] = convertBytesToUInt.byte[1];
-
-    for (j = 0; j < numberOfOfflineDetectors; j++) {
-        sram->get(SRAM_OFFLINE_DETECTORS_MEMORY_START + (j * SRAM_OFFLINE_DETECTORS_MEMORY_SEGMENT_SIZE), offlineDetectorAuxBuffer[0]);
-        sram->get(SRAM_OFFLINE_DETECTORS_MEMORY_START + (j * SRAM_OFFLINE_DETECTORS_MEMORY_SEGMENT_SIZE) + 1, offlineDetectorAuxBuffer[1]);
-
-        if (offlineDetectorAuxBuffer[0] == comparatorAuxBuffer[0] && offlineDetectorAuxBuffer[1] == comparatorAuxBuffer[1]) {
-            return j;
+    index = SRAM_OFFLINE_DETECTORS_MEMORY_START + numberOfOfflineDetectors * SRAM_OFFLINE_DETECTORS_MEMORY_SEGMENT_SIZE;
+    if(index + SRAM_OFFLINE_DETECTORS_MEMORY_SEGMENT_SIZE <= SRAM_OFFLINE_DETECTORS_MEMORY_END) {
+        for(i=SRAM_OFFLINE_DETECTORS_MEMORY_START; i<index; i+=SRAM_OFFLINE_DETECTORS_MEMORY_SEGMENT_SIZE) {
+            sram->get(i, offlineDetectorAuxBuffer);
+            convertBytesToUInt.byte[0] = offlineDetectorAuxBuffer[0];
+            convertBytesToUInt.byte[1] = offlineDetectorAuxBuffer[1];
+            if(convertBytesToUInt.intVal == detectorEntryIndex) {
+                return (i - SRAM_OFFLINE_DETECTORS_MEMORY_START) / SRAM_OFFLINE_DETECTORS_MEMORY_SEGMENT_SIZE;
+            }
         }
     }
-
     return -1;
 }
 
-boolean SRAMController::deleteOfflineDetector(uint16_t detectorEntryIndex) {
-    index = findOfflineDetector(detectorEntryIndex);
-    if (index >= 0) {
-        if ((uint16_t)(index + 1) != numberOfOfflineDetectors) {
-            for (i = 0; i < 2; i++) {
-                sram->get(SRAM_OFFLINE_DETECTORS_MEMORY_START + ((numberOfOfflineDetectors - 1) * SRAM_OFFLINE_DETECTORS_MEMORY_SEGMENT_SIZE) + i, offlineDetectorAuxBuffer[i]);
-                sram->put(SRAM_OFFLINE_DETECTORS_MEMORY_START + (index * SRAM_OFFLINE_DETECTORS_MEMORY_SEGMENT_SIZE) + i, offlineDetectorAuxBuffer[i]);
-            }
+boolean SRAMController::deleteOfflineDetector(uint16_t elemIndex) {
+    if(elemIndex >= 0 && numberOfOfflineDetectors > 0 && elemIndex < numberOfOfflineDetectors) {
+        index = SRAM_OFFLINE_DETECTORS_MEMORY_START + elemIndex * SRAM_OFFLINE_DETECTORS_MEMORY_SEGMENT_SIZE;
+        if(elemIndex+1 != numberOfOfflineDetectors) {
+
+            i = SRAM_OFFLINE_DETECTORS_MEMORY_START + (numberOfOfflineDetectors-1) * SRAM_OFFLINE_DETECTORS_MEMORY_SEGMENT_SIZE;
+            sram->get(i, offlineDetectorAuxBuffer);
+            sram->put(index, offlineDetectorAuxBuffer);
         }
         numberOfOfflineDetectors--;
         return true;

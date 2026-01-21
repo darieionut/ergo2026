@@ -59,9 +59,10 @@ void TGSController::setup() {
 }
 
 void TGSController::tick() {
-    lastValue = currentValue;
-    currentValue = analogRead(HW_TGS_SENSOR_PIN);
-    valueChanged = (currentValue != lastValue);
+    currentValue = map(analogRead(HW_TGS_SENSOR_PIN), 0, 1023, 0, 500);
+    if(currentValue != lastValue) {
+        valueChanged = true;
+    }
 }
 
 boolean TGSController::hasValueChanged() {
@@ -69,6 +70,8 @@ boolean TGSController::hasValueChanged() {
 }
 
 uint16_t TGSController::getValue() {
+    valueChanged = false;
+    lastValue = currentValue;
     return currentValue;
 }
 
@@ -105,34 +108,37 @@ void DetectorLEDController::tick(uint32_t currentMillis) {
 }
 
 void DetectorLEDController::setSemaphore(uint8_t color) {
-    if (lastSemaphoreColor != color) {
+    if(lastSemaphoreColor != color) {
+        switch(color) {
+            case LED_SEMAPHORE_RED:
+                digitalWrite(HW_OUTPUT_LED_RED_PIN, HIGH);
+                digitalWrite(HW_OUTPUT_LED_YELLOW_PIN, LOW);
+                digitalWrite(HW_OUTPUT_LED_GREEN_PIN, LOW);
+            break;
+            case LED_SEMAPHORE_YELLOW:
+                digitalWrite(HW_OUTPUT_LED_RED_PIN, LOW);
+                digitalWrite(HW_OUTPUT_LED_YELLOW_PIN, HIGH);
+                digitalWrite(HW_OUTPUT_LED_GREEN_PIN, LOW);
+            break;
+            case LED_SEMAPHORE_GREEN:
+                digitalWrite(HW_OUTPUT_LED_RED_PIN, LOW);
+                digitalWrite(HW_OUTPUT_LED_YELLOW_PIN, LOW);
+                digitalWrite(HW_OUTPUT_LED_GREEN_PIN, HIGH);
+            break;
+            case 10:
+                digitalWrite(HW_OUTPUT_LED_RED_PIN, HIGH);
+                digitalWrite(HW_OUTPUT_LED_YELLOW_PIN, HIGH);
+                digitalWrite(HW_OUTPUT_LED_GREEN_PIN, HIGH);
+            break;
+            default:
+                digitalWrite(HW_OUTPUT_LED_RED_PIN, LOW);
+                digitalWrite(HW_OUTPUT_LED_YELLOW_PIN, LOW);
+                digitalWrite(HW_OUTPUT_LED_GREEN_PIN, LOW);
+            break;
+        }
         lastSemaphoreColor = color;
         lastSemaphoreState = 0;
-        lastSemaphoreChange = millis();
-
-        // Turn off all semaphore LEDs first
-        digitalWrite(HW_OUTPUT_LED_RED_PIN, LOW);
-        digitalWrite(HW_OUTPUT_LED_YELLOW_PIN, LOW);
-        digitalWrite(HW_OUTPUT_LED_GREEN_PIN, LOW);
-
-        // Turn on the selected color
-        switch (color) {
-            case LED_SEMAPHORE_RED:
-                // Will blink in tick()
-                digitalWrite(HW_OUTPUT_LED_RED_PIN, HIGH);
-                lastSemaphoreState = 1;
-                break;
-            case LED_SEMAPHORE_YELLOW:
-                digitalWrite(HW_OUTPUT_LED_YELLOW_PIN, HIGH);
-                break;
-            case LED_SEMAPHORE_GREEN:
-                digitalWrite(HW_OUTPUT_LED_GREEN_PIN, HIGH);
-                break;
-            case LED_SEMAPHORE_OFF:
-            default:
-                // All LEDs already off
-                break;
-        }
+        lastSemaphoreChange = 0;
     }
 }
 
