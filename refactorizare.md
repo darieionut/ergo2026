@@ -773,3 +773,396 @@ Fiecare fișier .cpp trebuie să includă header-urile corecte:
 3. **Macro-uri specifice hardware:**
    - `cc1101_Select()`, `cc1101_Deselect()`, `wait_Miso()`, etc.
    - Trebuie definite în CC1101Controller sau într-un fișier hardware specific
+
+---
+
+## VARIANTA 2: Refactorizare Simplificată (Medium)
+
+Această variantă reduce numărul de fișiere prin gruparea componentelor similare în fișiere mai mari.
+
+### Structura Propusă (~20 fișiere vs ~50+ în varianta completă)
+
+```
+ergo2026/
+├── common/
+│   ├── Config.h                    # Toate configurările comune (CC1101, Types, CCPACKET)
+│   ├── Controllers.h               # Declarații pentru toate controllerele comune
+│   ├── Controllers.cpp             # Implementări CC1101, Button, LED, Output, EEPROM
+│   └── Services.h/.cpp             # SerialDebug + CommunicationService
+│
+├── floor-module/
+│   ├── Config.h                    # Main + Hardware + EEPROM + SRAM + Menu configs
+│   ├── Models.h                    # Toate structurile de date
+│   ├── Controllers.h/.cpp          # MicrochipSRAM + SRAMController
+│   ├── Services.h/.cpp             # Menu + Core + ServiceMode + Programming + Startup
+│   └── ergo-floor-module.ino       # Fișier principal
+│
+└── detector/
+    ├── Config.h                    # Main + Hardware + EEPROM + Alert + Buzzer + TGS
+    ├── Models.h                    # CompleteData
+    ├── Controllers.h/.cpp          # Buzzer + TGS controllers
+    ├── Services.h/.cpp             # Alarm + ServiceMode + Programming + Startup
+    └── fw-ergo-detector.ino        # Fișier principal
+```
+
+### Detalii Fișiere
+
+#### common/Config.h
+```cpp
+#ifndef COMMON_CONFIG_H
+#define COMMON_CONFIG_H
+
+// ========== CC1101 Config ==========
+#define CC1101_Interrupt 1
+#define CC1101_GDO2 3
+#define CC1101_MAX_BUFFER_SIZE 30
+// ... toate CC1101_* și CCDEF_*
+
+// ========== Types ==========
+union ConvertBytesToLong { uint8_t byte[4]; int32_t longVal; };
+union ConvertBytesToULong { uint8_t byte[4]; uint32_t longVal; };
+union ConvertBytesToInt { uint8_t byte[2]; int16_t intVal; };
+union ConvertBytesToUInt { uint8_t byte[2]; uint16_t intVal; };
+
+// ========== CCPACKET ==========
+struct CCPACKET {
+    uint8_t length;
+    uint8_t data[CC1101_MAX_BUFFER_SIZE];
+    boolean crc_ok;
+    int8_t rssi;
+    uint8_t lqi;
+};
+
+#endif
+```
+
+#### common/Controllers.h
+```cpp
+#ifndef COMMON_CONTROLLERS_H
+#define COMMON_CONTROLLERS_H
+
+#include "Config.h"
+#include <Arduino.h>
+#include <SPI.h>
+
+// ========== Button Controller ==========
+struct btnState { uint8_t pin; boolean lastValue; uint32_t timestamp; boolean clicked; boolean stateChanged; };
+class ButtonController {
+    // ... declarații
+};
+
+// ========== LED Controller ==========
+class LEDController {
+    // ... declarații
+};
+
+// ========== Output Controller ==========
+class OutputController {
+    // ... declarații
+};
+
+// ========== EEPROM Controller ==========
+class EEPROMController {
+    // ... declarații
+};
+
+// ========== CC1101 Controller ==========
+class CC1101Controller {
+    // ... declarații
+};
+
+#endif
+```
+
+### Avantaje Varianta Medium
+- **~20 fișiere** în loc de ~50+
+- Mai ușor de navigat pentru proiecte mici
+- Toate configurările într-un singur loc per modul
+- Compilare mai rapidă (mai puține fișiere de procesat)
+
+### Dezavantaje
+- Fișiere mai mari, mai greu de citit
+- Modificări într-o componentă afectează întregul fișier
+- Mai puțină granularitate pentru control versiune
+
+---
+
+## VARIANTA 3: Refactorizare Minimală (Simple)
+
+Această variantă păstrează codul aproape monolitic, dar cu o separare clară în doar 3-4 fișiere per proiect.
+
+### Structura Propusă (~10 fișiere total)
+
+```
+ergo2026/
+├── common/
+│   └── Common.h                    # TOT codul comun într-un singur header
+│
+├── floor-module/
+│   ├── FloorModuleConfig.h         # Toate configurările + modele
+│   ├── FloorModuleLib.h            # Toate declarațiile claselor
+│   ├── FloorModuleLib.cpp          # Toate implementările
+│   └── ergo-floor-module.ino       # setup() + loop()
+│
+└── detector/
+    ├── DetectorConfig.h            # Toate configurările + modele
+    ├── DetectorLib.h               # Toate declarațiile claselor
+    ├── DetectorLib.cpp             # Toate implementările
+    └── fw-ergo-detector.ino        # setup() + loop()
+```
+
+### Detalii Fișiere
+
+#### common/Common.h (~500 linii)
+```cpp
+#ifndef COMMON_H
+#define COMMON_H
+
+#include <Arduino.h>
+#include <SPI.h>
+
+// ==================== CC1101 DEFINITIONS ====================
+#define CC1101_Interrupt 1
+#define CC1101_GDO2 3
+#define CC1101_MAX_BUFFER_SIZE 30
+#define CC1101_MAX_TX_BUFFER_SIZE 15
+#define CC1101_MAX_RX_BUFFER_SIZE 100
+// ... (toate definițiile CC1101_*, CCDEF_*, WRITE_BURST, etc.)
+
+// ==================== TYPE UNIONS ====================
+union ConvertBytesToLong { uint8_t byte[4]; int32_t longVal; };
+union ConvertBytesToULong { uint8_t byte[4]; uint32_t longVal; };
+union ConvertBytesToInt { uint8_t byte[2]; int16_t intVal; };
+union ConvertBytesToUInt { uint8_t byte[2]; uint16_t intVal; };
+
+// ==================== CCPACKET ====================
+struct CCPACKET {
+    uint8_t length;
+    uint8_t data[CC1101_MAX_BUFFER_SIZE];
+    boolean crc_ok;
+    int8_t rssi;
+    uint8_t lqi;
+};
+
+// ==================== SERIAL DEBUG ====================
+class SerialDebug {
+private:
+    boolean debugEnabled;
+public:
+    SerialDebug(boolean enabled) : debugEnabled(enabled) {}
+    void begin(uint32_t baud) { if(debugEnabled) Serial.begin(baud); }
+    void print(const char* msg) { if(debugEnabled) Serial.print(msg); }
+    void println(const char* msg) { if(debugEnabled) Serial.println(msg); }
+    void print(int val) { if(debugEnabled) Serial.print(val); }
+    void println(int val) { if(debugEnabled) Serial.println(val); }
+};
+
+// ==================== CC1101 CONTROLLER (INLINE) ====================
+// Macros și funcții helper inline
+#define cc1101_Select()   digitalWrite(SS, LOW)
+#define cc1101_Deselect() digitalWrite(SS, HIGH)
+#define wait_Miso()       while(digitalRead(MISO))
+
+class CC1101Controller {
+private:
+    SPISettings spiSettings;
+    uint8_t rfState;
+
+    void writeBurstReg(uint8_t regAddr, uint8_t* buffer, uint8_t len);
+    void readBurstReg(uint8_t* buffer, uint8_t regAddr, uint8_t len);
+
+public:
+    uint8_t channel;
+    uint8_t syncWord[2];
+    uint8_t devAddress;
+
+    CC1101Controller();
+    void init();
+    void reset();
+    void cmdStrobe(uint8_t cmd);
+    uint8_t readReg(uint8_t regAddr, uint8_t regType);
+    void writeReg(uint8_t regAddr, uint8_t value);
+    void setCCregs();
+    void setSyncWord(uint8_t syncH, uint8_t syncL);
+    void setDevAddress(uint8_t addr);
+    void setChannel(uint8_t chnl);
+    bool sendData(CCPACKET packet);
+    uint8_t receiveData(CCPACKET *packet);
+    void setRxState();
+    void setTxState();
+    int computeRssi(uint8_t rssi_dec);
+    int computeLqi(uint8_t raw);
+};
+
+#endif
+```
+
+#### floor-module/FloorModuleConfig.h
+```cpp
+#ifndef FLOOR_MODULE_CONFIG_H
+#define FLOOR_MODULE_CONFIG_H
+
+// ==================== MAIN CONFIG ====================
+#define APP_VERSION 40
+#define DEVICE_TYPE 2
+#define WATCHDOG_ENABLED true
+#define WATCHDOG_RECEIVE_RESET_MS 300000
+#define SERIAL_BAUDRATE 19200
+#define DETECTOR_OFFLINE_MS 420000
+#define DEBUG_ENABLED false
+
+// ==================== HARDWARE CONFIG ====================
+#define HW_STATUS_LED_PIN 6
+#define HW_OUTPUT_RELAY_AC_PIN 9
+#define HW_OUTPUT_RELAY_DC_PIN 7
+#define HW_INPUT_BTN_BACK_PIN 5
+#define HW_INPUT_BTN_LEFT_PIN 4
+#define HW_INPUT_BTN_RIGHT_PIN 17
+#define HW_INPUT_BTN_OK_PIN 16
+#define HW_SPI_CS_SRAM_PIN 15
+
+#define BTN_COUNT 5
+#define BTN_DEBOUNCE_PERIOD 40
+#define BTN_BACK 0
+#define BTN_LEFT 1
+#define BTN_RIGHT 2
+#define BTN_OK 3
+
+// ==================== EEPROM CONFIG ====================
+#define EEPROM_SERIAL_NUMBER_ADDRESS_START 0
+#define EEPROM_CC1101_DEVICE_ADDRESS_INT 100
+#define EEPROM_CC1101_DEVICE_CHANNEL_BYTE 102
+// ... restul definițiilor EEPROM
+
+// ==================== SRAM CONFIG ====================
+#define SRAM_ALARMS_MEMORY_START 0
+#define SRAM_ALARMS_MEMORY_END 6050
+#define SRAM_DETECTORS_MEMORY_START 6050
+#define SRAM_DETECTORS_MEMORY_END 54050
+// ... restul definițiilor SRAM
+
+// ==================== MODELS ====================
+struct AlarmEntry { uint16_t address; uint16_t id; boolean state; };
+struct DetectorEntry { uint16_t address; uint16_t id; uint8_t linkQuality; uint8_t status; uint32_t lastUpdateMs; };
+struct OfflineDetectorEntry { uint16_t detectorEntryIndex; };
+struct AddressVerificationInterval { uint16_t min; uint16_t max; };
+struct CompleteData { uint16_t address; uint8_t channel; uint16_t forwardAddress; uint8_t forwardChannel; uint8_t operationMode; boolean debugEnabled; };
+
+#endif
+```
+
+#### floor-module/FloorModuleLib.h
+```cpp
+#ifndef FLOOR_MODULE_LIB_H
+#define FLOOR_MODULE_LIB_H
+
+#include "../common/Common.h"
+#include "FloorModuleConfig.h"
+#include <extEEPROM.h>
+#include <LiquidCrystal_I2C.h>
+
+// ==================== BUTTON CONTROLLER ====================
+class ButtonController { /* ... */ };
+
+// ==================== LED CONTROLLER ====================
+class LEDController { /* ... */ };
+
+// ==================== OUTPUT CONTROLLER ====================
+class OutputController { /* ... */ };
+
+// ==================== EEPROM CONTROLLER ====================
+class EEPROMController { /* ... */ };
+
+// ==================== SRAM CONTROLLER ====================
+class MicrochipSRAM { /* ... */ };
+class SRAMController { /* ... */ };
+
+// ==================== SERVICES ====================
+class MenuService { /* ... */ };
+class CoreService { /* ... */ };
+class ServiceMode { /* ... */ };
+class ProgrammingService { /* ... */ };
+class Startup { /* ... */ };
+
+#endif
+```
+
+#### detector/DetectorConfig.h
+```cpp
+#ifndef DETECTOR_CONFIG_H
+#define DETECTOR_CONFIG_H
+
+// ==================== MAIN CONFIG ====================
+#define APP_VERSION 25
+#define DEVICE_TYPE 1
+#define WATCHDOG_ENABLED true
+#define SERIAL_BAUDRATE 19200
+#define DEBUG_ENABLED false
+
+// ==================== HARDWARE CONFIG ====================
+#define HW_STATUS_LED_PIN 6
+#define HW_OUTPUT_LED_RED_PIN 5
+#define HW_OUTPUT_LED_YELLOW_PIN 4
+#define HW_OUTPUT_LED_GREEN_PIN 9
+#define HW_OUTPUT_BUZZER_PIN 7
+#define HW_OUTPUT_RELAY_PIN 2
+#define HW_INPUT_BTN_TEST_PIN 16
+#define HW_TGS_SENSOR_PIN 17
+
+#define BTN_COUNT 1
+#define BTN_TEST 0
+
+// ==================== TGS CONFIG ====================
+#define TGS_STARTUP_DELAY_MS 60000
+#define TGS_DEFAULT_ALERT_VALUE 406
+#define TGS_NUMBER_OF_MEASUREMENTS_BEFORE_ALARM 6
+
+// ==================== ALERT CONFIG ====================
+#define ALARM_STATUS_MESSAGE_RESEND_MS_MIN 30000
+#define ALARM_STATUS_MESSAGE_RESEND_MS_MAX 120000
+#define ALARM_MESSAGE_MAX_RESEND_COUNT 5
+#define ALARM_MIN_ACTIVE_PERIOD_MS 180000
+
+// ==================== MODELS ====================
+struct CompleteData { uint16_t address; uint8_t channel; uint16_t receiverAddress; uint16_t deviceId; int16_t alarmTrigger; boolean debugEnabled; };
+
+#endif
+```
+
+### Comparație Variante
+
+| Aspect | Varianta 1 (Completă) | Varianta 2 (Medium) | Varianta 3 (Minimală) |
+|--------|----------------------|---------------------|----------------------|
+| **Nr. fișiere** | ~50+ | ~20 | ~10 |
+| **Complexitate** | Ridicată | Medie | Scăzută |
+| **Granularitate** | Foarte bună | Bună | Limitată |
+| **Timp implementare** | Lung | Mediu | Scurt |
+| **Mentenanță** | Excelentă | Bună | Acceptabilă |
+| **Curba învățare** | Abruptă | Moderată | Ușoară |
+| **Refolosire cod** | Maximă | Bună | Limitată |
+| **Compilare** | Mai lentă | Medie | Rapidă |
+
+### Recomandare
+
+- **Varianta 1 (Completă)**: Pentru echipe mari sau proiecte pe termen lung
+- **Varianta 2 (Medium)**: Cel mai bun compromis între organizare și simplitate
+- **Varianta 3 (Minimală)**: Pentru prototipare rapidă sau dezvoltatori singuri
+
+### Pași Implementare Varianta 3
+
+```bash
+# 1. Creare structură
+mkdir -p common floor-module detector
+
+# 2. Creare Common.h
+# - Copiază CC1101 defines din ambele fișiere
+# - Copiază type unions
+# - Copiază CCPACKET struct
+# - Copiază SerialDebug inline
+
+# 3. Pentru fiecare modul:
+# - Extrage configurările în *Config.h
+# - Extrage declarațiile în *Lib.h
+# - Extrage implementările în *Lib.cpp
+# - Păstrează setup()/loop() în *.ino
+```
