@@ -13,6 +13,7 @@
 9. [Operații de Citire/Scriere](#9-operații-de-citire-scriere)
 10. [Scenarii de Utilizare](#10-scenarii-de-utilizare)
 11. [Referințe Cod Sursă](#11-referințe-cod-sursă)
+12. [Statistici și Vizualizări](#12-statistici-și-vizualizări)
 
 ---
 
@@ -781,6 +782,136 @@ Modulul de Etaj implementează un sistem de memorie robust și eficient:
    - Acces O(1) prin index
    - Conversie byte-level pentru compatibilitate AVR
    - Buffer circular pentru backup persistent
+
+---
+
+## 12. Statistici și Vizualizări
+
+### 12.1 Distribuția Memoriei SRAM (64 KB)
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        SRAM 23LC512 - 65,536 bytes                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  0 KB            16 KB           32 KB           48 KB           64 KB      │
+│  │               │               │               │               │          │
+│  ▼               ▼               ▼               ▼               ▼          │
+│  ┌───────┬───────────────────────────────────────┬───────────┬───┐          │
+│  │ALARME │              DETECTOARE               │  OFFLINE  │ ░ │          │
+│  │ 9.2%  │                 73.3%                 │   14.6%   │2.9│          │
+│  │6,050 B│              48,000 B                 │  9,600 B  │   │          │
+│  └───────┴───────────────────────────────────────┴───────────┴───┘          │
+│                                                                             │
+│  ████████ Alarme (6,050 B)      ░░░░░░░░ Neutilizat (1,886 B)               │
+│  ████████ Detectoare (48,000 B)                                             │
+│  ████████ Offline (9,600 B)                                                 │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 12.2 Comparație Dimensiuni Structuri
+
+```
+                    Dimensiune (bytes)
+                    0    2    4    6    8    10
+                    │    │    │    │    │    │
+  AlarmEntry        ├────────────┤ 5 bytes
+                    │████████████│
+                    │            │
+  DetectorEntry     ├────────────────────────┤ 10 bytes
+                    │████████████████████████│
+                    │            │
+  OfflineEntry      ├────┤ 2 bytes
+                    │████│
+                    │            │
+  AddrVerifInterval ├────────┤ 4 bytes
+                    │████████│
+```
+
+### 12.3 Capacitate per Zonă
+
+```
+  Alarme          ▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  1,210
+  Detectoare      ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░  4,800
+  Offline         ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░  4,800
+                  ├─────────────────────────────────────────────────┤
+                  0                                              5,000
+                                  Număr intrări
+```
+
+### 12.4 Utilizare EEPROM (512 bytes)
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                      EEPROM 24LC04B - 512 bytes                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  Adresă:  0      50     100    150    200    250    300    400    512       │
+│           │      │      │      │      │      │      │      │      │         │
+│           ▼      ▼      ▼      ▼      ▼      ▼      ▼      ▼      ▼         │
+│           ┌──┬───┬──────┬──────────────┬──────┬──────────────────────┐      │
+│           │SN│CF│ RF   │ BACKUP ALARME│ VERIF│     NEUTILIZAT       │      │
+│           │4B│  │CONFIG│   100 bytes  │ 41B  │      ~220 bytes      │      │
+│           └──┴───┴──────┴──────────────┴──────┴──────────────────────┘      │
+│                                                                             │
+│  SN = Serial Number (4 bytes)                                               │
+│  CF = Config Flags (adresa 10, 50)                                          │
+│  RF CONFIG = Adrese și canale CC1101 (100-108)                              │
+│  BACKUP ALARME = Buffer circular 20 alarme (111-210)                        │
+│  VERIF = Intervale verificare adrese (250-291)                              │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 12.5 Scenarii Utilizare - Grafic Comparativ
+
+```
+  Utilizare SRAM per Scenariu:
+
+  Birouri (50 det)    ▓░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  0.9%
+  Fabrică (500 det)   ▓▓▓▓░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  8.5%
+  Industrial (2000)   ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░  35%
+  Maxim (4800 det)    ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░  97%
+                      ├─────────────────────────────────────────────────┤
+                      0%                                              100%
+```
+
+### 12.6 Tabel Sumar Statistici
+
+| Metric | Valoare | Unitate |
+|--------|---------|---------|
+| **SRAM Total** | 65,536 | bytes |
+| **SRAM Utilizabil** | 63,650 | bytes (97.1%) |
+| **SRAM Neutilizat** | 1,886 | bytes (2.9%) |
+| **EEPROM Total** | 512 | bytes |
+| **EEPROM Utilizat** | ~292 | bytes (~57%) |
+| **Max Alarme SRAM** | 1,210 | intrări |
+| **Max Detectoare** | 4,800 | intrări |
+| **Max Offline** | 4,800 | intrări |
+| **Backup Alarme EEPROM** | 20 | intrări |
+| **Intervale Verificare** | 10 | intrări |
+
+### 12.7 Eficiență Stocare
+
+```
+  Bytes per intrare vs. Date utile:
+
+  AlarmEntry (5B)
+  ├─ address  [██████████████████████████████████████████] 2B (40%)
+  ├─ id       [██████████████████████████████████████████] 2B (40%)
+  └─ state    [█████████████████████] 1B (20%)
+
+  DetectorEntry (10B)
+  ├─ address      [████████████████████] 2B (20%)
+  ├─ id           [████████████████████] 2B (20%)
+  ├─ linkQuality  [██████████] 1B (10%)
+  ├─ status       [██████████] 1B (10%)
+  └─ lastUpdateMs [████████████████████████████████████████] 4B (40%)
+
+  OfflineEntry (2B)
+  └─ index        [██████████████████████████████████████████████████] 2B (100%)
+```
 
 ---
 
