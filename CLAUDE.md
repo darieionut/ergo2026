@@ -337,12 +337,26 @@ ergo2026/
 
 ### 7.1 Microcontroler
 
+#### Specificații Generale
+
 | Specificație | Detaliu |
 |--------------|---------|
 | **Arhitectură** | AVR 8-bit |
 | **Compatibilitate** | Arduino |
 | **Watchdog** | Activat (timeout configurabil) |
 | **Framework** | Arduino.h |
+
+#### Floor Module - Microcontroler ATmega328PB
+
+| Parametru | Specificație |
+|-----------|--------------|
+| **Model** | ATmega328PB |
+| **Arhitectură** | AVR 8-bit |
+| **Memorie Flash** | 32 KB |
+| **Memorie RAM** | 2 KB |
+| **Memorie EEPROM internă** | 1 KB |
+| **Frecvență maximă** | 20 MHz |
+| **Frecvență operare** | 16 MHz (cristal cuarț extern) |
 
 ### 7.2 Comunicație RF (CC1101)
 
@@ -359,6 +373,13 @@ ergo2026/
 | **Modulație** | 2-FSK | Default CC1101 |
 
 ### 7.3 Sisteme de Memorie
+
+#### Memorie Externă Floor Module
+
+| Componentă | Model | Producător | Capacitate | Interfață | Viteză |
+|------------|-------|------------|------------|-----------|--------|
+| **SRAM** | 23LC512 | Microchip Technology | 64 KB | SPI | 20 MHz |
+| **EEPROM** | 24LC04B | Microchip Technology | 4 Kbit (512 bytes) | I2C | Standard |
 
 #### EEPROM Intern/Extern (I2C)
 
@@ -387,7 +408,39 @@ ergo2026/
 | **Backlight** | Auto-off după 60s inactivitate |
 | **Timeout meniu** | 120s (revenire la HOME) |
 
-### 7.5 Senzori și Ieșiri
+#### Componente Interfață Utilizator (Floor Module)
+
+| Componentă | Specificație |
+|------------|--------------|
+| **Display LCD** | 16x2 caractere, interfață I2C (adresa 0x27) |
+| **Butoane navigare** | BACK, LEFT, RIGHT, OK |
+| **LED indicator alimentare** | Indică starea alimentării |
+| **LED indicator firmware** | Indică starea firmware-ului |
+
+### 7.5 Conectivitate și Interfețe (Floor Module)
+
+| Interfață | Utilizare |
+|-----------|-----------|
+| **USB Mini** | Conexiune Bluetooth pentru aplicația mobilă Ergo Installer |
+| **UART (Serial)** | Programare firmware și debug (19200 baud) |
+| **SPI** | Comunicare cu SRAM 23LC512 și CC1101 |
+| **I2C** | Comunicare cu EEPROM 24LC04B și LCD |
+
+### 7.6 Ieșiri de Putere (Floor Module)
+
+| Componentă | Specificație | Utilizare |
+|------------|--------------|-----------|
+| **Releu AC** | 220V | Control electrovalvă sau alte dispozitive AC |
+| **Releu DC** | Tensiune joasă | Control dispozitive DC |
+
+### 7.7 Timing
+
+| Componentă | Specificație |
+|------------|--------------|
+| **Cristal cuarț** | 16 MHz |
+| **Watchdog** | Activ, timeout configurabil |
+
+### 7.8 Senzori și Ieșiri
 
 #### Detector
 
