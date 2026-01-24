@@ -2,20 +2,70 @@
 
 ## Cuprins
 
-1. [Arhitectura Generală](#1-arhitectura-generală)
-2. [SRAM Extern (64KB)](#2-sram-extern-64kb)
-3. [Zone de Memorie SRAM](#3-zone-de-memorie-sram)
-4. [EEPROM Intern](#4-eeprom-intern)
-5. [Structuri de Date](#5-structuri-de-date)
-6. [Controllere de Memorie](#6-controllere-de-memorie)
-7. [Utilitare de Conversie](#7-utilitare-de-conversie)
-8. [Operații de Citire/Scriere](#8-operații-de-citire-scriere)
-9. [Scenarii de Utilizare](#9-scenarii-de-utilizare)
-10. [Referințe Cod Sursă](#10-referințe-cod-sursă)
+1. [Componente Hardware](#1-componente-hardware)
+2. [Arhitectura Generală](#2-arhitectura-generală)
+3. [SRAM Extern (64KB)](#3-sram-extern-64kb)
+4. [Zone de Memorie SRAM](#4-zone-de-memorie-sram)
+5. [EEPROM Extern](#5-eeprom-extern)
+6. [Structuri de Date](#6-structuri-de-date)
+7. [Controllere de Memorie](#7-controllere-de-memorie)
+8. [Utilitare de Conversie](#8-utilitare-de-conversie)
+9. [Operații de Citire/Scriere](#9-operații-de-citire-scriere)
+10. [Scenarii de Utilizare](#10-scenarii-de-utilizare)
+11. [Referințe Cod Sursă](#11-referințe-cod-sursă)
 
 ---
 
-## 1. Arhitectura Generală
+## 1. Componente Hardware
+
+Floor Module utilizează următoarele componente hardware pentru sistemul de memorie:
+
+### 1.1 Microcontroler
+
+| Parametru | Specificație |
+|-----------|--------------|
+| **Model** | ATmega328PB |
+| **Arhitectură** | AVR 8-bit |
+| **Memorie Flash** | 32 KB |
+| **Memorie RAM** | 2 KB |
+| **Memorie EEPROM internă** | 1 KB |
+| **Frecvență maximă** | 20 MHz |
+| **Frecvență operare** | 16 MHz (cristal cuarț extern) |
+
+### 1.2 Memorie Externă
+
+| Componentă | Model | Producător | Capacitate | Interfață | Viteză |
+|------------|-------|------------|------------|-----------|--------|
+| **SRAM** | 23LC512 | Microchip Technology | 64 KB | SPI | 20 MHz |
+| **EEPROM** | 24LC04B | Microchip Technology | 4 Kbit (512 bytes) | I2C | Standard |
+
+### 1.3 Interfețe de Comunicație
+
+| Interfață | Utilizare |
+|-----------|-----------|
+| **SPI** | Comunicare cu SRAM 23LC512 și CC1101 |
+| **I2C** | Comunicare cu EEPROM 24LC04B și LCD |
+| **UART (Serial)** | Programare firmware și debug (19200 baud) |
+
+### 1.4 Pinout Relevant pentru Memorie
+
+| Pin | Funcție | Descriere |
+|-----|---------|-----------|
+| 15 | HW_SPI_CS_SRAM_PIN | Chip Select SRAM |
+| SDA | I2C Data | Comunicație EEPROM |
+| SCL | I2C Clock | Comunicație EEPROM |
+
+### 1.5 Timing
+
+| Componentă | Specificație |
+|------------|--------------|
+| **Cristal cuarț** | 16 MHz |
+| **Watchdog** | Activ, timeout configurabil |
+| **Viteză SPI SRAM** | 26 MHz maxim |
+
+---
+
+## 2. Arhitectura Generală
 
 Floor Module implementează un **sistem dual de memorie**:
 - **SRAM extern 64KB** - pentru date volatile de runtime (alarme, detectoare)
@@ -44,7 +94,7 @@ Floor Module implementează un **sistem dual de memorie**:
 │  └────────────────────────────────────────────────────────────────┘ │
 │                                                                      │
 │  ┌────────────────────────────────────────────────────────────────┐ │
-│  │                    EEPROM INTERN (~1KB)                         │ │
+│  │              EEPROM EXTERN 24LC04B (512 bytes via I2C)          │ │
 │  ├────────────────────────────────────────────────────────────────┤ │
 │  │                                                                  │ │
 │  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐  │ │
@@ -63,16 +113,16 @@ Floor Module implementează un **sistem dual de memorie**:
 
 ### Rezumat Capacități
 
-| Memorie | Capacitate Totală | Utilizare |
-|---------|-------------------|-----------|
-| SRAM | 65,536 bytes | Date runtime volatile |
-| EEPROM | ~1,024 bytes | Configurare + backup persistent |
+| Memorie | Componentă | Capacitate Totală | Utilizare |
+|---------|------------|-------------------|-----------|
+| SRAM | 23LC512 | 65,536 bytes (64 KB) | Date runtime volatile |
+| EEPROM | 24LC04B | 512 bytes (4 Kbit) | Configurare + backup persistent |
 
 ---
 
-## 2. SRAM Extern (64KB)
+## 3. SRAM Extern (64KB)
 
-### 2.1 Specificații Hardware
+### 3.1 Specificații Hardware
 
 | Parametru | Valoare | Descriere |
 |-----------|---------|-----------|
@@ -83,7 +133,7 @@ Floor Module implementează un **sistem dual de memorie**:
 | **Viteză SPI** | 26MHz | Clock SPI maxim |
 | **Mod Operare** | Sequential (0x40) | `SRAM_SEQ_MODE` |
 
-### 2.2 Registre și Coduri SPI
+### 3.2 Registre și Coduri SPI
 
 ```cpp
 // Coduri de operare SRAM
@@ -98,7 +148,7 @@ const uint8_t SRAM_PAGE_MODE = 0b10000000;  // Scriere pagină
 const uint8_t SRAM_SEQ_MODE  = 0b01000000;  // Mod secvențial (utilizat)
 ```
 
-### 2.3 Protocol SPI de Comunicare
+### 3.3 Protocol SPI de Comunicare
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -129,9 +179,9 @@ const uint8_t SRAM_SEQ_MODE  = 0b01000000;  // Mod secvențial (utilizat)
 
 ---
 
-## 3. Zone de Memorie SRAM
+## 4. Zone de Memorie SRAM
 
-### 3.1 Harta Completă SRAM
+### 4.1 Harta Completă SRAM
 
 ```
 Adresă      │ Dimensiune │ Zonă                    │ Capacitate
@@ -154,7 +204,7 @@ Adresă      │ Dimensiune │ Zonă                    │ Capacitate
 ────────────┴────────────┴─────────────────────────┴─────────────
 ```
 
-### 3.2 Zona Alarme (0 - 6,050)
+### 4.2 Zona Alarme (0 - 6,050)
 
 **Configurare:**
 - **Start:** `SRAM_ALARMS_MEMORY_START` = 0
@@ -182,7 +232,7 @@ Index │ Adresă Start │ Adresă End │ Conținut
 1209  │ 6,045        │ 6,050      │ [ADDR_LO][ADDR_HI][ID_LO][ID_HI][STATE]
 ```
 
-### 3.3 Zona Detectoare (6,050 - 54,050)
+### 4.3 Zona Detectoare (6,050 - 54,050)
 
 **Configurare:**
 - **Start:** `SRAM_DETECTORS_MEMORY_START` = 6,050
@@ -211,7 +261,7 @@ Index │ Adresă Start │ Adresă End │ Conținut (10 bytes)
 4799  │ 54,040       │ 54,050     │ [ADDR][ID][LQI][STS][TIMESTAMP_4B]
 ```
 
-### 3.4 Zona Detectoare Offline (54,050 - 63,650)
+### 4.4 Zona Detectoare Offline (54,050 - 63,650)
 
 **Configurare:**
 - **Start:** `SRAM_OFFLINE_DETECTORS_MEMORY_START` = 54,050
@@ -233,9 +283,9 @@ Offset │ Dim │ Câmp               │ Tip      │ Descriere
 
 ---
 
-## 4. EEPROM Intern
+## 5. EEPROM Extern
 
-### 4.1 Harta Adreselor EEPROM
+### 5.1 Harta Adreselor EEPROM
 
 | Adresă | Dimensiune | Nume | Tip | Descriere |
 |--------|------------|------|-----|-----------|
@@ -252,7 +302,7 @@ Offset │ Dim │ Câmp               │ Tip      │ Descriere
 | 250 | 1 byte | Verification Count | uint8_t | Număr intervale verificare |
 | 251-291 | 40 bytes | Verification Intervals | Interval[] | 10 intervale adrese |
 
-### 4.2 Zona Backup Alarme (111-210)
+### 5.2 Zona Backup Alarme (111-210)
 
 **Configurare:**
 - **Start:** `EEPROM_ALARMS_MEMORY_START` = 111
@@ -284,7 +334,7 @@ Offset │ Dim │ Câmp               │ Tip      │ Descriere
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-### 4.3 Intervale Verificare Adrese (251-291)
+### 5.3 Intervale Verificare Adrese (251-291)
 
 **Configurare:**
 - **Start:** `EEPROM_ADDRESS_VERIFICATION_INTERVALS_START` = 251
@@ -304,9 +354,9 @@ Offset │ Dim │ Câmp │ Tip      │ Descriere
 
 ---
 
-## 5. Structuri de Date
+## 6. Structuri de Date
 
-### 5.1 AlarmEntry
+### 6.1 AlarmEntry
 
 **Locație:** `floor-module/Models.h`
 **Dimensiune:** 5 bytes
@@ -319,7 +369,7 @@ struct AlarmEntry {
 };
 ```
 
-### 5.2 DetectorEntry
+### 6.2 DetectorEntry
 
 **Locație:** `floor-module/Models.h`
 **Dimensiune:** 10 bytes
@@ -334,7 +384,7 @@ struct DetectorEntry {
 };
 ```
 
-### 5.3 OfflineDetectorEntry
+### 6.3 OfflineDetectorEntry
 
 **Locație:** `floor-module/Models.h`
 **Dimensiune:** 2 bytes
@@ -345,7 +395,7 @@ struct OfflineDetectorEntry {
 };
 ```
 
-### 5.4 AddressVerificationInterval
+### 6.4 AddressVerificationInterval
 
 **Locație:** `floor-module/Models.h`
 **Dimensiune:** 4 bytes
@@ -359,9 +409,9 @@ struct AddressVerificationInterval {
 
 ---
 
-## 6. Controllere de Memorie
+## 7. Controllere de Memorie
 
-### 6.1 MicrochipSRAM (Driver Hardware)
+### 7.1 MicrochipSRAM (Driver Hardware)
 
 **Locație:** `floor-module/Controllers.h:19-97`
 
@@ -387,7 +437,7 @@ public:
 };
 ```
 
-### 6.2 SRAMController (Logică Aplicație)
+### 7.2 SRAMController (Logică Aplicație)
 
 **Locație:** `floor-module/Controllers.h:100-152`
 **Implementare:** `floor-module/Controllers.cpp:50-390`
@@ -439,7 +489,7 @@ public:
 };
 ```
 
-### 6.3 FloorModuleEEPROMController
+### 7.3 FloorModuleEEPROMController
 
 **Locație:** `floor-module/Controllers.h:157-184`
 **Implementare:** `floor-module/Controllers.cpp:392-545`
@@ -473,7 +523,7 @@ public:
 
 ---
 
-## 7. Utilitare de Conversie
+## 8. Utilitare de Conversie
 
 **Locație:** `common/Config.h:174-195`
 
@@ -521,9 +571,9 @@ uint16_t address = conv.intVal;
 
 ---
 
-## 8. Operații de Citire/Scriere
+## 9. Operații de Citire/Scriere
 
-### 8.1 Scrierea unui Detector în SRAM
+### 9.1 Scrierea unui Detector în SRAM
 
 **Funcție:** `SRAMController::addDetector()`
 **Locație:** `floor-module/Controllers.cpp:199-251`
@@ -561,7 +611,7 @@ uint16_t address = conv.intVal;
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-### 8.2 Citirea unui Detector din SRAM
+### 9.2 Citirea unui Detector din SRAM
 
 **Funcție:** `SRAMController::getDetector()`
 **Locație:** `floor-module/Controllers.cpp:253-276`
@@ -598,7 +648,7 @@ uint16_t address = conv.intVal;
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-### 8.3 Adăugare Alarmă în Buffer Circular EEPROM
+### 9.3 Adăugare Alarmă în Buffer Circular EEPROM
 
 **Funcție:** `FloorModuleEEPROMController::addAlarm()`
 **Locație:** `floor-module/Controllers.cpp:422-445`
@@ -632,9 +682,9 @@ uint16_t address = conv.intVal;
 
 ---
 
-## 9. Scenarii de Utilizare
+## 10. Scenarii de Utilizare
 
-### 9.1 Instalație Mică (Clădire de Birouri)
+### 10.1 Instalație Mică (Clădire de Birouri)
 
 | Parametru | Valoare | Memorie Utilizată |
 |-----------|---------|-------------------|
@@ -643,7 +693,7 @@ uint16_t address = conv.intVal;
 | Detectoare offline | 5 | 10 bytes |
 | **Total SRAM** | - | **560 bytes (0.9%)** |
 
-### 9.2 Instalație Medie (Fabrică)
+### 10.2 Instalație Medie (Fabrică)
 
 | Parametru | Valoare | Memorie Utilizată |
 |-----------|---------|-------------------|
@@ -652,7 +702,7 @@ uint16_t address = conv.intVal;
 | Detectoare offline | 50 | 100 bytes |
 | **Total SRAM** | - | **5,600 bytes (8.5%)** |
 
-### 9.3 Instalație Mare (Complex Industrial)
+### 10.3 Instalație Mare (Complex Industrial)
 
 | Parametru | Valoare | Memorie Utilizată |
 |-----------|---------|-------------------|
@@ -661,7 +711,7 @@ uint16_t address = conv.intVal;
 | Detectoare offline | 200 | 400 bytes |
 | **Total SRAM** | - | **22,900 bytes (35%)** |
 
-### 9.4 Capacitate Maximă
+### 10.4 Capacitate Maximă
 
 | Parametru | Valoare | Memorie Utilizată |
 |-----------|---------|-------------------|
@@ -672,9 +722,9 @@ uint16_t address = conv.intVal;
 
 ---
 
-## 10. Referințe Cod Sursă
+## 11. Referințe Cod Sursă
 
-### 10.1 Fișiere Principale
+### 11.1 Fișiere Principale
 
 | Fișier | Conținut |
 |--------|----------|
@@ -684,7 +734,7 @@ uint16_t address = conv.intVal;
 | `floor-module/Controllers.cpp` | Implementări (liniile 50-545) |
 | `common/Config.h` | Utilitare conversie bytes (liniile 174-195) |
 
-### 10.2 Constante Cheie
+### 11.2 Constante Cheie
 
 | Constantă | Valoare | Fișier | Linie |
 |-----------|---------|--------|-------|
@@ -700,7 +750,7 @@ uint16_t address = conv.intVal;
 | `SRAM_OFFLINE_DETECTORS_MEMORY_END` | 63,650 | floor-module/Config.h | 130 |
 | `SRAM_OFFLINE_DETECTORS_MEMORY_SEGMENT_SIZE` | 2 | floor-module/Config.h | 131 |
 
-### 10.3 Funcții Principale
+### 11.3 Funcții Principale
 
 | Funcție | Locație | Descriere |
 |---------|---------|-----------|
@@ -716,12 +766,12 @@ uint16_t address = conv.intVal;
 
 Modulul de Etaj implementează un sistem de memorie robust și eficient:
 
-1. **SRAM Extern 64KB** - stocare rapidă pentru date runtime
+1. **SRAM Extern 23LC512 (64KB via SPI)** - stocare rapidă pentru date runtime
    - 1,210 alarme simultane
    - 4,800 detectoare
    - 4,800 indecși offline
 
-2. **EEPROM Intern** - persistență pentru:
+2. **EEPROM Extern 24LC04B (512 bytes via I2C)** - persistență pentru:
    - Configurare (adrese, canale, mod operare)
    - 20 alarme backup (buffer circular)
    - 10 intervale verificare adrese
