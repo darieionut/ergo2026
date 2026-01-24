@@ -365,4 +365,165 @@ void loop() {
 
 ---
 
+## BUG #2: Adresă și ID = 0 (NOU în v4.0)
+
+### Problema Raportată
+
+De la versiunea 4.0 apar alarme cu:
+- Address = 0
+- ID = 0
+
+### Cauza: Buffer Overwrite în Timpul Procesării
+
+**Localizare:** `floor-module/ergo-floor-module.ino` liniile 77-85
+
+```cpp
+void cc1101Receive() {
+    if (packetWaiting) {                    // ← LIPSEȘTE: && recvBufferLen == 0
+        detachInterrupt(CC1101_Interrupt);
+        communicationService.receive(recvBuffer, &recvBufferLen);  // ← SUPRASCRIE!
+        ...
+    }
+}
+```
+
+### Mecanismul Bug-ului
+
+```
+┌────────────────────────────────────────────────────────────────────────────┐
+│                    BUFFER OVERWRITE - TIMELINE                              │
+├────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│   Frecvențe din main loop:                                                  │
+│   - cc1101Receive() rulează la 200Hz (fiecare 5ms)                          │
+│   - coreService.tick() rulează la 100Hz (fiecare 10ms)                      │
+│                                                                             │
+│   ⚠️  cc1101Receive rulează de 2x mai des decât procesarea!                 │
+│                                                                             │
+│   Timeline:                                                                 │
+│   ────────────────────────────────────────────────────────────────────────  │
+│                                                                             │
+│   T=0ms   Pachet primit de la Detector #123                                 │
+│           recvBuffer = [0x01, 0x00, 0x7B, 0x00, 0x05, 0x00, 0x01, ...]      │
+│                         receiver=1   addr=123   id=5     cmd=start          │
+│           receiveBufferLen = 8                                              │
+│                                                                             │
+│   T=10ms  coreService.tick() ÎNCEPE procesarea                              │
+│           ├── operationModeMaster() ÎNCEPE                                  │
+│           │   ├── findDetector(123)... ← DUREAZĂ ~2-3ms                     │
+│                                                                             │
+│   T=12ms  *** INTERRUPT! Pachet nou sosit ***                               │
+│           packetWaiting = true                                              │
+│                                                                             │
+│   T=15ms  cc1101Receive() SUPRASCRIE BUFFER!                                │
+│           ├── packetWaiting = true ✓                                        │
+│           ├── recvBufferLen == 0? NU SE VERIFICĂ! ← BUG                     │
+│           ├── communicationService.receive(recvBuffer, ...)                 │
+│           │                                                                 │
+│           │   recvBuffer = [0x01, 0x00, 0x00, 0x00, 0x00, 0x00, ...]        │
+│           │   Pachet parțial/corupt sau cu alte date!                       │
+│                                                                             │
+│   T=15ms  coreService.tick() CONTINUĂ (nu știe de overwrite!)               │
+│   (cont)  │   ├── addReceiveToAlarmsList()                                  │
+│           │   │   ├── address = recvBuffer[2,3] = 0 ← ZERO!                 │
+│           │   │   ├── id = recvBuffer[4,5] = 0      ← ZERO!                 │
+│           │   │   └── addAlarm({addr=0, id=0})                              │
+│           │   │                                                             │
+│           │   │       *** ALARMĂ CU ADDRESS=0, ID=0 SALVATĂ! ***            │
+│                                                                             │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+### De Ce Apare Mai Des în v4.0
+
+Versiunea 4.0 refactorizată are:
+1. **Mai mult cod** = procesare mai lentă = fereastră de vulnerabilitate mai mare
+2. **Timing modificat** = mai multe șanse de coliziune
+3. **Nu există validare address != 0** înainte de addAlarm()
+
+### Codul Lipsă (Protecție)
+
+```cpp
+// ACTUAL (BUG) - floor-module/ergo-floor-module.ino:77-85
+void cc1101Receive() {
+    if (packetWaiting) {
+        // PRIMEȘTE ORICUM, chiar dacă procesarea anterioară nu s-a terminat!
+        communicationService.receive(recvBuffer, &recvBufferLen);
+        ...
+    }
+}
+
+// CORECTAT:
+void cc1101Receive() {
+    if (packetWaiting && recvBufferLen == 0) {  // ← ADAUGĂ VERIFICARE!
+        communicationService.receive(recvBuffer, &recvBufferLen);
+        ...
+    }
+}
+```
+
+### Soluție Completă
+
+**Fix 1: Protecție în cc1101Receive() (OBLIGATORIU)**
+```cpp
+void cc1101Receive() {
+    if (packetWaiting && recvBufferLen == 0) {  // Așteaptă procesarea
+        detachInterrupt(CC1101_Interrupt);
+        communicationService.receive(recvBuffer, &recvBufferLen);
+        lastCommunicationRX = millis();
+        packetWaiting = false;
+        attachInterrupt(CC1101_Interrupt, ihrMessageReceived, FALLING);
+    }
+}
+```
+
+**Fix 2: Validare în addReceiveToAlarmsList() (SUPLIMENTAR)**
+```cpp
+int16_t CoreService::addReceiveToAlarmsList(uint16_t idx, boolean state) {
+    convertBytesToUInt.byte[0] = receiveBuffer[BUFF_INDEX_ADDRESS_LO];
+    convertBytesToUInt.byte[1] = receiveBuffer[BUFF_INDEX_ADDRESS_HI];
+    alarmEntry.address = convertBytesToUInt.intVal;
+
+    // VALIDARE NOUĂ:
+    if (alarmEntry.address == 0) {
+        return -1;  // Refuză adrese invalide
+    }
+
+    // ... restul codului
+}
+```
+
+### Test de Confirmare
+
+Adaugă temporar în `cc1101Receive()`:
+```cpp
+void cc1101Receive() {
+    if (packetWaiting) {
+        if (recvBufferLen > 0) {
+            Serial.println(F("WARN: Buffer overwrite!"));  // ← Diagnostic
+        }
+        // ... restul codului
+    }
+}
+```
+
+Dacă vezi mesaje "WARN: Buffer overwrite!" = **bug confirmat**.
+
+---
+
+## Rezumat: 2 Bug-uri Distincte
+
+| Bug | Simptom | Cauza | Severitate |
+|-----|---------|-------|------------|
+| **#1** | Adrese 5 cifre aleatorii | Race condition în SRAMController | 🟡 Medie |
+| **#2** | Address=0, ID=0 | Buffer overwrite (lipsă `&& recvBufferLen == 0`) | 🔴 Mare |
+
+### Ordinea de Rezolvare Recomandată
+
+1. **Bug #2 ÎNTÂI** - adaugă `&& recvBufferLen == 0` în cc1101Receive()
+2. **Bug #1** - refactorizează variabilele partajate în SRAMController
+
+---
+
 *Analiză generată: 24 Ianuarie 2026*
+*Actualizată cu Bug #2: Buffer Overwrite*
