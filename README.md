@@ -171,7 +171,69 @@ ergo2026/
 |-----------|---------|
 | **Versiune** | 4.0 |
 | **Tip Dispozitiv** | 2 |
-| **Microcontroler** | AVR (Arduino compatibil) |
+| **Microcontroler** | ATmega328PB |
+
+#### Specificatii Hardware Detaliate
+
+**Microcontroler:**
+
+| Parametru | Specificatie |
+|-----------|--------------|
+| **Model** | ATmega328PB |
+| **Arhitectura** | AVR 8-bit |
+| **Memorie Flash** | 32 KB |
+| **Memorie RAM** | 2 KB |
+| **Memorie EEPROM interna** | 1 KB |
+| **Frecventa maxima** | 20 MHz |
+| **Frecventa operare** | 16 MHz (cristal cuart extern) |
+
+**Memorie Externa:**
+
+| Componenta | Model | Producator | Capacitate | Interfata | Viteza |
+|------------|-------|------------|------------|-----------|--------|
+| **SRAM** | 23LC512 | Microchip Technology | 64 KB | SPI | 20 MHz |
+| **EEPROM** | 24LC04B | Microchip Technology | 4 Kbit (512 bytes) | I2C | Standard |
+
+**Modul Radio:**
+
+| Parametru | Specificatie |
+|-----------|--------------|
+| **Chip** | CC1101 (Texas Instruments) |
+| **Frecventa** | 868 MHz (banda ISM Europa) |
+| **Interfata** | SPI |
+| **Modulatie** | 2-FSK |
+
+**Componente Interfata Utilizator:**
+
+| Componenta | Specificatie |
+|------------|--------------|
+| **Display LCD** | 16x2 caractere, interfata I2C (adresa 0x27) |
+| **Butoane navigare** | BACK, LEFT, RIGHT, OK |
+| **LED indicator alimentare** | Indica starea alimentarii |
+| **LED indicator firmware** | Indica starea firmware-ului |
+
+**Conectivitate si Interfete:**
+
+| Interfata | Utilizare |
+|-----------|-----------|
+| **USB Mini** | Conexiune Bluetooth pentru aplicatia mobila Ergo Installer |
+| **UART (Serial)** | Programare firmware si debug (19200 baud) |
+| **SPI** | Comunicare cu SRAM 23LC512 si CC1101 |
+| **I2C** | Comunicare cu EEPROM 24LC04B si LCD |
+
+**Iesiri de Putere:**
+
+| Componenta | Specificatie | Utilizare |
+|------------|--------------|-----------|
+| **Releu AC** | 220V | Control electrovalva sau alte dispozitive AC |
+| **Releu DC** | Tensiune joasa | Control dispozitive DC |
+
+**Timing:**
+
+| Componenta | Specificatie |
+|------------|--------------|
+| **Cristal cuart** | 16 MHz |
+| **Watchdog** | Activ, timeout configurabil |
 
 **Pinout Hardware:**
 
