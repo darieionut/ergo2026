@@ -1,5 +1,9 @@
 # Timeline Buffer Mesaje - Sistem ERGO26 Floor Module
 
+**Bazat pe:** `ergo-floor-module-v4.0.cpp` (cod în producție)
+
+---
+
 ## Tipuri de Memorie Implicate
 
 ```
@@ -14,7 +18,7 @@
 │  │  │  ══════════════════                                             │    │    │
 │  │  │  • Buffer hardware intern CC1101                                │    │    │
 │  │  │  • Accesibil prin SPI (readBurstReg)                            │    │    │
-│  │  │  • Se golește automat după citire                               │    │    │
+│  │  │  • Se golește cu flushRxFifo() după citire                      │    │    │
 │  │  │  • Conține: length + data + RSSI + LQI/CRC                      │    │    │
 │  │  └─────────────────────────────────────────────────────────────────┘    │    │
 │  │  ┌─────────────────────────────────────────────────────────────────┐    │    │
@@ -29,61 +33,100 @@
 │                                      ▼                                           │
 │  ┌─────────────────────────────────────────────────────────────────────────┐    │
 │  │                    MCU ATmega328PB - RAM (2 KB)                          │    │
+│  │                                                                          │    │
 │  │  ┌─────────────────────────────────────────────────────────────────┐    │    │
-│  │  │  recvBuffer[100] - Adresă: RAM global                           │    │    │
+│  │  │  CCPACKET packet - Variabilă membru CommunicationService        │    │    │
+│  │  │  (ergo-floor-module-v4.0.cpp:654)                               │    │    │
+│  │  │  ═══════════════════════════════════════════════════            │    │    │
+│  │  │  • Dimensiune: 30 bytes data + 1 length + 1 crc_ok + 1 rssi     │    │    │
+│  │  │              + 1 lqi = ~34 bytes                                │    │    │
+│  │  │  • Locație: RAM (membru al clasei, nu stack)                    │    │    │
+│  │  │  • Persistență: Permanent (instanță globală)                    │    │    │
+│  │  │                                                                 │    │    │
+│  │  │  struct CCPACKET {                                              │    │    │
+│  │  │      uint8_t length;                    // Lungime date         │    │    │
+│  │  │      uint8_t data[30];                  // Date utile           │    │    │
+│  │  │      boolean crc_ok;                    // Validare CRC         │    │    │
+│  │  │      int8_t rssi;                       // Putere semnal        │    │    │
+│  │  │      uint8_t lqi;                       // Calitate legătură    │    │    │
+│  │  │  };                                                             │    │    │
+│  │  └─────────────────────────────────────────────────────────────────┘    │    │
+│  │                                                                          │    │
+│  │  ┌─────────────────────────────────────────────────────────────────┐    │    │
+│  │  │  recvBuffer[100] - Variabilă globală                            │    │    │
+│  │  │  (ergo-floor-module-v4.0.cpp:962)                               │    │    │
 │  │  │  ══════════════════════════════════════                         │    │    │
 │  │  │  • 100 bytes rezervați pentru recepție                          │    │    │
 │  │  │  • Tipul: uint8_t[]                                             │    │    │
-│  │  │  • Persistent între cicluri loop()                              │    │    │
-│  │  │  • ⚠️  NU ESTE INIȚIALIZAT EXPLICIT LA PORNIRE                  │    │    │
+│  │  │  • Locație: RAM global (secțiunea .bss)                         │    │    │
+│  │  │  • Persistență: Permanent între cicluri loop()                  │    │    │
+│  │  │  • Inițializat cu 0 la pornire (C++ standard)                   │    │    │
 │  │  │                                                                 │    │    │
-│  │  │  Structura pachet în buffer (8 bytes pentru alarmă):            │    │    │
+│  │  │  ⚠️  BUFFER ACUMULATIV - poate conține MULTIPLE pachete!        │    │    │
+│  │  │                                                                 │    │    │
+│  │  │  Structura unui pachet în buffer (8 bytes):                     │    │    │
 │  │  │  ┌─────┬─────┬─────┬─────┬─────┬─────┬─────┬─────┐              │    │    │
 │  │  │  │  0  │  1  │  2  │  3  │  4  │  5  │  6  │  7  │              │    │    │
 │  │  │  ├─────┴─────┼─────┴─────┼─────┴─────┼─────┼─────┤              │    │    │
 │  │  │  │ RECEIVER  │  ADDRESS  │    ID     │ CMD │ FWD │              │    │    │
 │  │  │  │  uint16   │  uint16   │  uint16   │ u8  │ u8  │              │    │    │
 │  │  │  └───────────┴───────────┴───────────┴─────┴─────┘              │    │    │
+│  │  │                                                                 │    │    │
+│  │  │  Când buffer conține 2 pachete (recvBufferLen = 16):            │    │    │
+│  │  │  ┌─────────────────────────┬─────────────────────────┐          │    │    │
+│  │  │  │ Pachet 1 (bytes 0-7)   │ Pachet 2 (bytes 8-15)   │          │    │    │
+│  │  │  └─────────────────────────┴─────────────────────────┘          │    │    │
 │  │  └─────────────────────────────────────────────────────────────────┘    │    │
+│  │                                                                          │    │
 │  │  ┌─────────────────────────────────────────────────────────────────┐    │    │
-│  │  │  sendBuffer[15] - Adresă: RAM global                            │    │    │
+│  │  │  sendBuffer[15] - Variabilă globală                             │    │    │
+│  │  │  (ergo-floor-module-v4.0.cpp:962)                               │    │    │
 │  │  │  ═══════════════════════════════════                            │    │    │
 │  │  │  • 15 bytes pentru transmisie                                   │    │    │
 │  │  │  • Tipul: uint8_t[]                                             │    │    │
+│  │  │  • Locație: RAM global                                          │    │    │
 │  │  └─────────────────────────────────────────────────────────────────┘    │    │
+│  │                                                                          │    │
 │  │  ┌─────────────────────────────────────────────────────────────────┐    │    │
-│  │  │  recvBufferLen, sendBufferLen - Adresă: RAM global              │    │    │
+│  │  │  recvBufferLen, sendBufferLen - Variabile globale               │    │    │
+│  │  │  (ergo-floor-module-v4.0.cpp:963)                               │    │    │
 │  │  │  ══════════════════════════════════════════════                 │    │    │
 │  │  │  • uint8_t - contoare lungime                                   │    │    │
-│  │  │  • recvBufferLen = 0 la startup (setup(), linia 125)            │    │    │
-│  │  │  • ⚠️  recvBuffer[] NU E RESETAT când len devine 0              │    │    │
+│  │  │  • recvBufferLen = 0 la setup() (linia 1028)                    │    │    │
+│  │  │  • Se incrementează cu fiecare pachet primit                    │    │    │
+│  │  │  • Se resetează la 0 după procesare completă                    │    │    │
 │  │  └─────────────────────────────────────────────────────────────────┘    │    │
+│  │                                                                          │    │
 │  │  ┌─────────────────────────────────────────────────────────────────┐    │    │
 │  │  │  packetWaiting - volatile boolean                               │    │    │
+│  │  │  (ergo-floor-module-v4.0.cpp:961)                               │    │    │
 │  │  │  ════════════════════════════════                               │    │    │
-│  │  │  • Flag setat de ISR (interrupt)                                │    │    │
-│  │  │  • Citit în loop principal                                      │    │    │
+│  │  │  • Flag setat de ISR (interrupt handler)                        │    │    │
+│  │  │  • volatile pentru acces din ISR și main loop                   │    │    │
+│  │  │  • Citit în cc1101Receive() la 200Hz                            │    │    │
 │  │  └─────────────────────────────────────────────────────────────────┘    │    │
 │  └─────────────────────────────────────────────────────────────────────────┘    │
 │                                      │                                           │
-│                                      │ Pointeri                                  │
+│                                      │ Pointeri (setReceiveBuffer)               │
 │                                      ▼                                           │
 │  ┌─────────────────────────────────────────────────────────────────────────┐    │
 │  │                  SRAM Extern 23LC512 (64 KB) - SPI                       │    │
 │  │  ┌─────────────────────────────────────────────────────────────────┐    │    │
 │  │  │  Zona Alarme: 0x0000 - 0x17A2 (6050 bytes)                      │    │    │
 │  │  │  ════════════════════════════════════════                       │    │    │
-│  │  │  • Capacitate: ~1210 alarme                                     │    │    │
+│  │  │  • Capacitate: ~1210 alarme (SRAM_ALARMS_MEMORY_SEGMENT_COUNT)  │    │    │
 │  │  │  • Segment size: 5 bytes/alarmă                                 │    │    │
 │  │  │  │  address (2B) + id (2B) + state (1B)                         │    │    │
-│  │  │  • Persistență: DOAR în timpul funcționării                     │    │    │
-│  │  │  • Se pierde la power-off (SRAM volatil)                        │    │    │
+│  │  │  • Persistență: DOAR în timpul funcționării (SRAM = volatil)    │    │    │
+│  │  │  • Se pierde complet la power-off/reset                         │    │    │
 │  │  └─────────────────────────────────────────────────────────────────┘    │    │
 │  │  ┌─────────────────────────────────────────────────────────────────┐    │    │
 │  │  │  Zona Detectoare: 0x17A2 - 0xD332 (48000 bytes)                 │    │    │
 │  │  │  ═══════════════════════════════════════════                    │    │    │
 │  │  │  • Capacitate: ~4800 detectoare                                 │    │    │
 │  │  │  • Segment size: 10 bytes/detector                              │    │    │
+│  │  │  │  address(2) + id(2) + linkQuality(1) + status(1)             │    │    │
+│  │  │  │  + lastUpdateMs(4)                                           │    │    │
 │  │  └─────────────────────────────────────────────────────────────────┘    │    │
 │  │  ┌─────────────────────────────────────────────────────────────────┐    │    │
 │  │  │  Zona Offline: 0xD332 - 0xF8A2 (9600 bytes)                     │    │    │
@@ -94,12 +137,12 @@
 │  └─────────────────────────────────────────────────────────────────────────┘    │
 │                                                                                  │
 │  ┌─────────────────────────────────────────────────────────────────────────┐    │
-│  │                   EEPROM 24LC04B (512 bytes) - I2C                       │    │
+│  │                   EEPROM Extern 24LC04B (512 bytes) - I2C                │    │
 │  │  ══════════════════════════════════════════════════                     │    │
-│  │  • Stocare configurări permanente                                       │    │
-│  │  • Backup alarme (max 10)                                               │    │
-│  │  • Address Verification Intervals                                       │    │
-│  │  • Persistență: Permanentă (non-volatil)                                │    │
+│  │  • Stocare configurări permanente (adresă, canal, etc.)                 │    │
+│  │  • Backup alarme: adrese 111-210 (max ~20 alarme)                       │    │
+│  │  • Address Verification Intervals: adrese 251-291 (max 10 intervale)    │    │
+│  │  • Persistență: Permanentă (non-volatil, ~1M cicluri scriere)           │    │
 │  └─────────────────────────────────────────────────────────────────────────┘    │
 │                                                                                  │
 └─────────────────────────────────────────────────────────────────────────────────┘
@@ -117,21 +160,23 @@ TIMP (ms)
     │   └─────────────────────────────────────────────────────────────────────────┘
     │
 T+0 │   ══════════════════════════════════════════════════════════════════════════
-    │   DETECTOR: Gaz detectat → Alarm confirmată (6 citiri consecutive)
+    │   DETECTOR: Gaz detectat → Alarmă confirmată (6 citiri consecutive)
     │
     │   ┌─────────────────────────────────────────────────────────────────────────┐
-    │   │ AlarmService::sendAlarmStartPackage()                                   │
+    │   │ Construcție pachet în detector (fw-ergo-detector-source-v2.5.cpp)       │
     │   │                                                                          │
-    │   │ 1. Construiește pachet în sendBuffer[15] (RAM Detector):                │
-    │   │    [0-1] receiverAddress = 0x0001 (Floor Module)                        │
-    │   │    [2-3] deviceAddress   = 0x000F (Detector #15)                        │
-    │   │    [4-5] deviceId        = 0x0003 (ID #3)                               │
-    │   │    [6]   command         = 0x01 (ALARM_START)                           │
-    │   │    [7]   isForward       = 0x00                                         │
+    │   │ Structura pachetului transmis (8 bytes):                                │
+    │   │ ┌─────────────────────────────────────────────────────────────────┐     │
+    │   │ │ [0-1] receiverAddress = 0x01 0x00 (Floor Module addr=1)        │     │
+    │   │ │ [2-3] deviceAddress   = 0x0F 0x00 (Detector addr=15)           │     │
+    │   │ │ [4-5] deviceId        = 0x03 0x00 (ID=3)                       │     │
+    │   │ │ [6]   command         = 0x01 (COMMAND_ID_ALARM_START)          │     │
+    │   │ │ [7]   isForward       = 0x00                                   │     │
+    │   │ └─────────────────────────────────────────────────────────────────┘     │
     │   │                                                                          │
-    │   │ 2. CC1101Controller::sendData(packet)                                   │
-    │   │    └─► Scrie în TX FIFO CC1101 prin SPI                                 │
-    │   │    └─► Comutare TX state → transmisie RF 868 MHz                        │
+    │   │ CC1101Controller::sendData(packet)                                      │
+    │   │   └─► Scrie în TX FIFO CC1101 prin SPI                                  │
+    │   │   └─► Comutare TX state → transmisie RF 868 MHz                         │
     │   └─────────────────────────────────────────────────────────────────────────┘
     │
 T+5 │   ══════════════════════════════════════════════════════════════════════════
@@ -140,200 +185,369 @@ T+5 │   ═══════════════════════�
     │   ┌─────────────────────────────────────────────────────────────────────────┐
     │   │ CC1101 RX FIFO (Hardware - pe modulul RF)                               │
     │   │                                                                          │
-    │   │ Pachet stocat în FIFO intern (64 bytes max):                            │
+    │   │ Pachet stocat în FIFO intern:                                           │
     │   │ ┌─────────────────────────────────────────────────────────────────┐     │
-    │   │ │ LEN │ DATA (8 bytes)                      │ RSSI │ LQI+CRC │    │     │
-    │   │ │ 08  │ 01 00 │ 0F 00 │ 03 00 │ 01 │ 00    │ -70  │ 80+OK   │    │     │
-    │   │ │     │RECV   │ADDR   │ ID    │CMD │FWD    │ dBm  │         │    │     │
+    │   │ │ LEN │ DATA (8 bytes)                       │ RSSI │ LQI+CRC │   │     │
+    │   │ │ 08  │ 01 00 0F 00 03 00 01 00              │ raw  │ raw     │   │     │
     │   │ └─────────────────────────────────────────────────────────────────┘     │
     │   │                                                                          │
-    │   │ GDO2 pin → LOW → Trigger interrupt pe MCU                               │
+    │   │ GDO2 pin → FALLING edge → Trigger interrupt pe MCU (pin 3)              │
     │   └─────────────────────────────────────────────────────────────────────────┘
     │
 T+5 │   ┌─────────────────────────────────────────────────────────────────────────┐
-    │   │ ISR: ihrMessageReceived() [ergo-floor-module.ino:69-71]                 │
+    │   │ ISR: ihrMessageReceived() [ergo-floor-module-v4.0.cpp:986-988]          │
     │   │                                                                          │
     │   │ void ihrMessageReceived() {                                             │
     │   │     packetWaiting = true;  ◄── Flag setat în RAM MCU (volatile)         │
     │   │ }                                                                        │
     │   │                                                                          │
-    │   │ Timp execuție: ~1-2 µs                                                  │
+    │   │ Timp execuție: ~1-2 µs (doar setare flag)                               │
+    │   │ NU citește datele - doar semnalizează                                   │
     │   └─────────────────────────────────────────────────────────────────────────┘
     │
     │   ┌─────────────────────────────────────────────────────────────────────────┐
     │   │                    ⏳ AȘTEPTARE LOOP 200Hz                               │
     │   │                    (max 5ms între iterații)                              │
+    │   │                    loop() → lastMillis200Hz >= 5                         │
     │   └─────────────────────────────────────────────────────────────────────────┘
     │
 T+10│   ══════════════════════════════════════════════════════════════════════════
-    │   LOOP 200Hz: cc1101Receive() [ergo-floor-module.ino:77-85]
+    │   LOOP 200Hz: cc1101Receive() [ergo-floor-module-v4.0.cpp:990-997]
     │
     │   ┌─────────────────────────────────────────────────────────────────────────┐
     │   │ void cc1101Receive() {                                                  │
     │   │     if (packetWaiting) {                          ◄── Verifică flag     │
     │   │         detachInterrupt(CC1101_Interrupt);        ◄── Dezactivează ISR  │
+    │   │                                                       (previne race)    │
     │   │         communicationService.receive(recvBuffer, &recvBufferLen);       │
-    │   │         lastCommunicationRX = millis();                                 │
+    │   │         lastCommunicationRX = millis();           ◄── Timestamp pt WDT  │
     │   │         packetWaiting = false;                    ◄── Reset flag        │
-    │   │         attachInterrupt(...);                     ◄── Reactivează ISR   │
-    │   │     }                                                                   │
+    │   │         attachInterrupt(..., ihrMessageReceived, FALLING);              │
+    │   │     }                                                ◄── Reactivează    │
     │   │ }                                                                        │
     │   └─────────────────────────────────────────────────────────────────────────┘
     │
 T+10│   ┌─────────────────────────────────────────────────────────────────────────┐
-    │   │ CommunicationService::receive() → CC1101Controller::receiveData()       │
-    │   │ [common/Controllers.cpp:328-352]                                        │
+    │   │ CC1101Controller::receiveData() [ergo-floor-module-v4.0.cpp:1521-1553]  │
     │   │                                                                          │
     │   │ uint8_t CC1101Controller::receiveData(CCPACKET *packet) {               │
-    │   │     rxBytes = readStatusReg(CC1101_RXBYTES);    ◄── SPI read            │
     │   │                                                                          │
-    │   │     if (rxBytes & 0x7F && !(rxBytes & 0x80)) {  ◄── Verifică bytes      │
-    │   │         packet->length = readConfigReg(CC1101_RXFIFO); ◄── Citește LEN  │
+    │   │     rxBytes = readStatusReg(CC1101_RXBYTES);    ◄── SPI: câți bytes?    │
     │   │                                                                          │
-    │   │         if (packet->length > 30)                                        │
-    │   │             packet->length = 0;                 ◄── ⚠️ Pachet INVALID   │
+    │   │     if (rxBytes & 0x7F && !(rxBytes & 0x80)) {  ◄── Bytes disponibili   │
+    │   │                                                     && fără overflow    │
+    │   │                                                                          │
+    │   │         packet->length = readConfigReg(CC1101_RXFIFO);                  │
+    │   │                          ▲                                              │
+    │   │                          └── SPI: citește primul byte = lungime (8)     │
+    │   │                                                                          │
+    │   │         if (packet->length > CC1101_MAX_BUFFER_SIZE) // > 30?           │
+    │   │             packet->length = 0;                 ◄── Pachet prea mare    │
     │   │         else {                                                          │
-    │   │             readBurstReg(packet->data, ..., packet->length);            │
+    │   │             readBurstReg(packet->data, CC1101_RXFIFO, packet->length);  │
     │   │             │                                                           │
     │   │             │  ┌─────────────────────────────────────────────────────┐  │
-    │   │             └─►│ TRANSFER SPI: CC1101 FIFO → packet.data (RAM MCU)  │  │
+    │   │             └─►│ SPI BURST READ: CC1101 FIFO → packet.data (RAM)    │  │
     │   │                │                                                     │  │
-    │   │                │ CC1101 FIFO          packet.data (CCPACKET)         │  │
-    │   │                │ ┌───────────┐        ┌───────────┐                  │  │
-    │   │                │ │01 00 0F 00│ ────►  │01 00 0F 00│  bytes 0-3      │  │
-    │   │                │ │03 00 01 00│ ────►  │03 00 01 00│  bytes 4-7      │  │
-    │   │                │ └───────────┘        └───────────┘                  │  │
+    │   │                │ CC1101 RX FIFO         CCPACKET.data[]              │  │
+    │   │                │ ┌───────────────┐      ┌───────────────┐            │  │
+    │   │                │ │01 00 0F 00    │─────►│01 00 0F 00    │ [0-3]     │  │
+    │   │                │ │03 00 01 00    │─────►│03 00 01 00    │ [4-7]     │  │
+    │   │                │ └───────────────┘      └───────────────┘            │  │
+    │   │                │                                                     │  │
+    │   │                │ Transfer: 8 bytes via SPI                           │  │
     │   │                └─────────────────────────────────────────────────────┘  │
     │   │                                                                          │
-    │   │             packet->rssi = readConfigReg(CC1101_RXFIFO);                │
-    │   │             packet->lqi = val & 0x7F;                                   │
-    │   │             packet->crc_ok = bitRead(val, 7);                           │
+    │   │             packet->rssi = readConfigReg(CC1101_RXFIFO); ◄── RSSI raw   │
+    │   │             val = readConfigReg(CC1101_RXFIFO);                         │
+    │   │             packet->lqi = val & 0x7F;                   ◄── LQI (0-127) │
+    │   │             packet->crc_ok = bitRead(val, 7);           ◄── CRC bit     │
     │   │         }                                                               │
     │   │     } else                                                              │
-    │   │         packet->length = 0;                     ◄── ⚠️ Nimic în FIFO   │
+    │   │         packet->length = 0;                     ◄── Nimic în FIFO      │
     │   │                                                                          │
+    │   │     setIdleState();                             ◄── CC1101 → IDLE       │
     │   │     flushRxFifo();                              ◄── Golește FIFO CC1101 │
-    │   │     return packet->length;                                              │
+    │   │     setRxState();                               ◄── CC1101 → RX mode    │
+    │   │                                                                          │
+    │   │     return packet->length;                      ◄── Returnează 8        │
     │   │ }                                                                        │
     │   └─────────────────────────────────────────────────────────────────────────┘
     │
 T+11│   ┌─────────────────────────────────────────────────────────────────────────┐
-    │   │ CommunicationService::receive() continuare                              │
+    │   │ CommunicationService::receive() [ergo-floor-module-v4.0.cpp:2406-2443]  │
     │   │                                                                          │
-    │   │ COPIERE: CCPACKET.data → recvBuffer (RAM global)                        │
+    │   │ void CommunicationService::receive(uint8_t *buff, uint8_t *len) {       │
     │   │                                                                          │
-    │   │ CCPACKET packet (stack)    recvBuffer[100] (RAM global)                 │
-    │   │ ┌───────────────────┐      ┌───────────────────────────────────────┐    │
-    │   │ │ length: 8         │      │ [0] 01  ◄── RECEIVER_LO               │    │
-    │   │ │ data[0-7]:        │ ───► │ [1] 00  ◄── RECEIVER_HI               │    │
-    │   │ │   01 00 0F 00     │      │ [2] 0F  ◄── ADDRESS_LO  ⚠️ POATE FI 0 │    │
-    │   │ │   03 00 01 00     │      │ [3] 00  ◄── ADDRESS_HI                │    │
-    │   │ │ rssi: -70         │      │ [4] 03  ◄── ID_LO       ⚠️ POATE FI 0 │    │
-    │   │ │ lqi: 85           │      │ [5] 00  ◄── ID_HI                     │    │
-    │   │ │ crc_ok: true      │      │ [6] 01  ◄── COMMAND                   │    │
-    │   │ └───────────────────┘      │ [7] 00  ◄── IS_FORWARD                │    │
-    │   │                             │ [8-99] ?? ◄── NEDEFINIT/VECHI         │    │
-    │   │                             └───────────────────────────────────────┘    │
+    │   │     if (radio->receiveData(&packet) > 0) {      ◄── packet.length > 0?  │
     │   │                                                                          │
-    │   │ recvBufferLen = 8;  ◄── Setează lungimea validă                         │
+    │   │         // Salvează RSSI și LQI pentru statistici                       │
+    │   │         lastLqi[indexRssiLqi] = radio->computeLqi(packet.lqi);          │
+    │   │         lastRssi[indexRssiLqi] = radio->computeRssi(packet.rssi);       │
     │   │                                                                          │
-    │   │ ⚠️ NOTĂ: Dacă packet.length era 0, recvBuffer NU E MODIFICAT            │
-    │   │          dar recvBufferLen POATE fi setat greșit (depinde de impl.)     │
+    │   │         // ═══════════════════════════════════════════════════════      │
+    │   │         // ✓ VERIFICARE CRC - PACHETELE CU CRC INVALID SUNT IGNORATE    │
+    │   │         // ═══════════════════════════════════════════════════════      │
+    │   │                                                                          │
+    │   │         if (!packet.crc_ok && debug->getDebugEnabled()) {               │
+    │   │             debug->print(F("CRC FAIL: "));      ◄── Loghează eroarea    │
+    │   │             // ... print packet data ...                                │
+    │   │         }                                                               │
+    │   │                                                                          │
+    │   │         if (packet.crc_ok && packet.length > 0) {  ◄── ✓ DOAR CRC OK    │
+    │   │                                                                          │
+    │   │             // ═══════════════════════════════════════════════════════  │
+    │   │             // ⚠️  BUFFER ACUMULATIV - ADAUGĂ LA SFÂRȘITUL BUFFER-ULUI  │
+    │   │             // ═══════════════════════════════════════════════════════  │
+    │   │                                                                          │
+    │   │             for(i=0; i<packet.length; i++) {                            │
+    │   │                 buff[*len + i] = packet.data[i];   ◄── Adaugă la offset │
+    │   │             }                                       │                   │
+    │   │             *len += packet.length;                  ◄── len = 0 + 8 = 8 │
+    │   │         }                                                               │
+    │   │     }                                                                   │
+    │   │ }                                                                        │
+    │   │                                                                          │
+    │   │ DUPĂ EXECUȚIE:                                                          │
+    │   │ ┌─────────────────────────────────────────────────────────────────┐     │
+    │   │ │ recvBuffer[] (RAM global):                                      │     │
+    │   │ │ ┌────┬────┬────┬────┬────┬────┬────┬────┬────────────────────┐  │     │
+    │   │ │ │ 01 │ 00 │ 0F │ 00 │ 03 │ 00 │ 01 │ 00 │ ... (rest = 0)    │  │     │
+    │   │ │ │RECV│    │ADDR│    │ ID │    │CMD │FWD │                    │  │     │
+    │   │ │ └────┴────┴────┴────┴────┴────┴────┴────┴────────────────────┘  │     │
+    │   │ │  [0]  [1]  [2]  [3]  [4]  [5]  [6]  [7]   [8-99]                │     │
+    │   │ │                                                                 │     │
+    │   │ │ recvBufferLen = 8                                               │     │
+    │   │ └─────────────────────────────────────────────────────────────────┘     │
     │   └─────────────────────────────────────────────────────────────────────────┘
     │
     │   ┌─────────────────────────────────────────────────────────────────────────┐
     │   │                    ⏳ AȘTEPTARE LOOP 100Hz                               │
     │   │                    (max 10ms între iterații)                             │
+    │   │                    loop() → lastMillis100Hz >= 10                        │
     │   └─────────────────────────────────────────────────────────────────────────┘
     │
 T+20│   ══════════════════════════════════════════════════════════════════════════
-    │   LOOP 100Hz: coreService.tick() [floor-module/Services.cpp:445-456]
+    │   LOOP 100Hz: coreService.tick() [ergo-floor-module-v4.0.cpp:2508-2517]
     │
     │   ┌─────────────────────────────────────────────────────────────────────────┐
     │   │ void CoreService::tick(uint32_t currentMillis) {                        │
-    │   │     if (*receiveBufferLen > 0) {                ◄── Verifică len=8      │
-    │   │                                                                          │
-    │   │         ⚠️ PROBLEMĂ: NU verifică dacă len >= 8 (min pentru alarmă)      │
-    │   │         ⚠️ PROBLEMĂ: NU verifică crc_ok (e pierdut la copiere)          │
-    │   │                                                                          │
-    │   │         if (operationMode == OPERATION_MODE_MASTER) {                   │
+    │   │     switch(operationMode) {                                             │
+    │   │         case OPERATION_MODE_MASTER:            // = 1                   │
     │   │             operationModeMaster(currentMillis);                         │
-    │   │         }                                                               │
-    │   │         *receiveBufferLen = 0;                  ◄── ⚠️ RESETEAZĂ DOAR   │
-    │   │     }                                                LUNGIMEA, NU DATELE│
+    │   │         break;                                                          │
+    │   │         case OPERATION_MODE_SLAVE:             // = 2                   │
+    │   │             operationModeSlave(currentMillis);                          │
+    │   │         break;                                                          │
+    │   │     }                                                                   │
     │   │ }                                                                        │
     │   └─────────────────────────────────────────────────────────────────────────┘
     │
 T+20│   ┌─────────────────────────────────────────────────────────────────────────┐
-    │   │ CoreService::operationModeMaster() [floor-module/Services.cpp:458-483]  │
+    │   │ CoreService::operationModeMaster()                                      │
+    │   │ [ergo-floor-module-v4.0.cpp:2532-2586]                                  │
     │   │                                                                          │
-    │   │ 1. EXTRAGERE RECEIVER ADDRESS din recvBuffer:                           │
-    │   │    convertBytesToUInt.byte[0] = recvBuffer[0];  // 0x01                 │
-    │   │    convertBytesToUInt.byte[1] = recvBuffer[1];  // 0x00                 │
-    │   │    → receiverAddress = 0x0001                                           │
+    │   │ void CoreService::operationModeMaster(uint32_t currentMillis) {         │
     │   │                                                                          │
-    │   │ 2. VERIFICARE: receiverAddress == deviceAddress (0x0001)?               │
-    │   │    → DA, pachetul e pentru mine                                         │
+    │   │     if(*receiveBufferLen > 0) {                 ◄── len=8, DA           │
+    │   │         index = 0;                                                      │
     │   │                                                                          │
-    │   │ 3. EXTRAGERE DETECTOR ADDRESS din recvBuffer:                           │
-    │   │    convertBytesToUInt.byte[0] = recvBuffer[2];  // 0x0F                 │
-    │   │    convertBytesToUInt.byte[1] = recvBuffer[3];  // 0x00                 │
-    │   │    → detectorAddress = 0x000F (15)                                      │
+    │   │         // ═══════════════════════════════════════════════════════      │
+    │   │         // WHILE LOOP - PROCESEAZĂ TOATE PACHETELE DIN BUFFER           │
+    │   │         // ═══════════════════════════════════════════════════════      │
     │   │                                                                          │
-    │   │    ⚠️ DACĂ recvBuffer[2-3] = 0x00 0x00 → address = 0                    │
+    │   │         while(index < *receiveBufferLen && *receiveBufferLen > 7) {     │
+    │   │               │                                    │                    │
+    │   │               │ index=0 < 8 ✓                      │ 8 > 7 ✓            │
+    │   │               │                                                         │
+    │   │               │  ┌─────────────────────────────────────────────────┐    │
+    │   │               └─►│ VERIFICARE 1: Este pachetul pentru mine?        │    │
+    │   │                  │                                                 │    │
+    │   │                  │ convertBytesToUInt.intVal = deviceAddress;      │    │
+    │   │                  │ // deviceAddress = 1 (din EEPROM)               │    │
+    │   │                  │                                                 │    │
+    │   │                  │ if(recvBuffer[0] == 0x01 &&                     │    │
+    │   │                  │    recvBuffer[1] == 0x00) {   ◄── DA, pentru FM │    │
+    │   │                  └─────────────────────────────────────────────────┘    │
     │   │                                                                          │
-    │   │ 4. VERIFICARE COMMAND:                                                  │
-    │   │    if (recvBuffer[6] == COMMAND_ID_ALARM_START) {                       │
-    │   │        addReceiveToDetectorsList(...);                                  │
-    │   │        addReceiveToAlarmsList(...);             ◄── SCRIE ÎN SRAM       │
-    │   │        outputController->set(RELAY_AC, true);   ◄── ACTIVEAZĂ RELEU     │
-    │   │    }                                                                    │
+    │   │                  ┌─────────────────────────────────────────────────┐    │
+    │   │                  │ VERIFICARE 2: Address Verification Intervals    │    │
+    │   │                  │ [ergo-floor-module-v4.0.cpp:2541-2554]          │    │
+    │   │                  │                                                 │    │
+    │   │                  │ if(numberOfAddressVerificationIntervals > 0) {  │    │
+    │   │                  │     // Citește address din buffer               │    │
+    │   │                  │     convertBytesToUInt.byte[0] = recvBuffer[2]; │    │
+    │   │                  │     convertBytesToUInt.byte[1] = recvBuffer[3]; │    │
+    │   │                  │     // address = 0x000F = 15                    │    │
+    │   │                  │                                                 │    │
+    │   │                  │     for(j=0; j<numberOfAddressVerificationIntervals; j++) { │
+    │   │                  │         if(min <= address && address <= max) {  │    │
+    │   │                  │             aux = 1; // VALID                   │    │
+    │   │                  │             break;                              │    │
+    │   │                  │         }                                       │    │
+    │   │                  │     }                                           │    │
+    │   │                  │     if(aux == 0) {                              │    │
+    │   │                  │         goto SKIP_PROCESSING;  ◄── SKIP dacă   │    │
+    │   │                  │     }                               invalid     │    │
+    │   │                  │ }                                               │    │
+    │   │                  │                                                 │    │
+    │   │                  │ ⚠️ DACĂ numberOfAddressVerificationIntervals=0  │    │
+    │   │                  │    VERIFICAREA NU SE FACE!                      │    │
+    │   │                  │    → Orice adresă (inclusiv 0) TRECE            │    │
+    │   │                  └─────────────────────────────────────────────────┘    │
+    │   │                                                                          │
+    │   │                  ┌─────────────────────────────────────────────────┐    │
+    │   │                  │ PROCESARE COMANDĂ                               │    │
+    │   │                  │ [ergo-floor-module-v4.0.cpp:2556-2578]          │    │
+    │   │                  │                                                 │    │
+    │   │                  │ switch(recvBuffer[6]) {  // COMMAND = 0x01     │    │
+    │   │                  │     case COMMAND_ID_ALARM_START:  // = 1        │    │
+    │   │                  │         addReceiveToDetectorsList(currentMillis, 0); │
+    │   │                  │         aux = addReceiveToAlarmsList(0, true);  │    │
+    │   │                  │         if(aux == -1 || aux == -3) {            │    │
+    │   │                  │             // Alarmă nouă sau reactivată       │    │
+    │   │                  │             outputController->setPulsed(RELAY_AC, ...); │
+    │   │                  │             outputController->setPulsed(RELAY_DC, ...); │
+    │   │                  │         }                                       │    │
+    │   │                  │     break;                                      │    │
+    │   │                  │ }                                               │    │
+    │   │                  └─────────────────────────────────────────────────┘    │
+    │   │                                                                          │
+    │   │             SKIP_PROCESSING:                                            │
+    │   │             index += 8;                          ◄── Avansează la       │
+    │   │         }                                            următorul pachet   │
+    │   │                                                                          │
+    │   │         // ═══════════════════════════════════════════════════════      │
+    │   │         // RESETARE BUFFER DUPĂ PROCESARE COMPLETĂ                      │
+    │   │         // ═══════════════════════════════════════════════════════      │
+    │   │         *receiveBufferLen = 0;                   ◄── DOAR len=0         │
+    │   │                                                      datele rămân!      │
+    │   │     }                                                                   │
+    │   │ }                                                                        │
     │   └─────────────────────────────────────────────────────────────────────────┘
     │
 T+21│   ┌─────────────────────────────────────────────────────────────────────────┐
-    │   │ CoreService::addReceiveToAlarmsList() → SRAMController::addAlarm()      │
+    │   │ CoreService::addReceiveToAlarmsList()                                   │
+    │   │ [ergo-floor-module-v4.0.cpp:2671-2688]                                  │
     │   │                                                                          │
-    │   │ TRANSFER: recvBuffer (RAM MCU) → SRAM Extern 23LC512                    │
+    │   │ EXTRAGERE DATE DIN recvBuffer:                                          │
     │   │                                                                          │
-    │   │ recvBuffer[100]              AlarmEntry           SRAM 23LC512          │
-    │   │ (RAM MCU)                    (stack temp)         (SPI extern)          │
-    │   │ ┌─────────────┐              ┌─────────────┐      ┌─────────────┐       │
-    │   │ │[2] 0F       │─►address─────│address:0x0F │─────►│ Addr 0x0000 │       │
-    │   │ │[3] 00       │              │id: 0x03     │      │ 0F 00 03 00 │       │
-    │   │ │[4] 03       │─►id──────────│state: true  │      │ 01          │       │
-    │   │ │[5] 00       │              └─────────────┘      └─────────────┘       │
-    │   │ └─────────────┘                                   5 bytes/alarmă        │
+    │   │ convertBytesToUInt.byte[0] = recvBuffer[index + 2];  // 0x0F            │
+    │   │ convertBytesToUInt.byte[1] = recvBuffer[index + 3];  // 0x00            │
+    │   │ alarmEntry.address = convertBytesToUInt.intVal;      // = 15            │
     │   │                                                                          │
-    │   │ SPI Write:                                                              │
-    │   │   1. CS pin LOW                                                         │
-    │   │   2. Comandă WRITE (0x02)                                               │
-    │   │   3. Adresă 16-bit                                                      │
-    │   │   4. 5 bytes date                                                       │
-    │   │   5. CS pin HIGH                                                        │
+    │   │ convertBytesToUInt.byte[0] = recvBuffer[index + 4];  // 0x03            │
+    │   │ convertBytesToUInt.byte[1] = recvBuffer[index + 5];  // 0x00            │
+    │   │ alarmEntry.id = convertBytesToUInt.intVal;           // = 3             │
+    │   │                                                                          │
+    │   │ alarmEntry.state = state;                            // = true          │
+    │   │                                                                          │
+    │   │ TRANSFER CĂTRE SRAM EXTERN:                                             │
+    │   │                                                                          │
+    │   │ recvBuffer[]                 AlarmEntry              SRAM 23LC512       │
+    │   │ (RAM MCU)                    (RAM stack)             (SPI extern)       │
+    │   │ ┌─────────────┐              ┌─────────────┐         ┌─────────────┐    │
+    │   │ │[2] 0F       │─►address ───►│address: 15  │────────►│ Addr 0x0000 │    │
+    │   │ │[3] 00       │              │id: 3        │         │ 0F 00 03 00 │    │
+    │   │ │[4] 03       │─►id ────────►│state: true  │         │ 01          │    │
+    │   │ │[5] 00       │              └─────────────┘         └─────────────┘    │
+    │   │ └─────────────┘                                      5 bytes/alarmă     │
+    │   │                                                                          │
+    │   │ SRAMController::addAlarm() execută:                                     │
+    │   │   1. Caută dacă alarma există deja (findAlarm)                          │
+    │   │   2. Dacă nu, scrie în SRAM la următoarea poziție liberă                │
+    │   │   3. Incrementează numberOfAlarms                                       │
     │   └─────────────────────────────────────────────────────────────────────────┘
     │
 T+22│   ══════════════════════════════════════════════════════════════════════════
     │   MESAJUL PROCESAT - BUFFER RESETAT
     │
     │   ┌─────────────────────────────────────────────────────────────────────────┐
-    │   │ După procesare:                                                         │
+    │   │ STARE DUPĂ PROCESARE:                                                   │
     │   │                                                                          │
     │   │ recvBuffer[100] (RAM MCU):                                              │
-    │   │ ┌───────────────────────────────────────────────────────────────────┐   │
-    │   │ │ [0] 01  │ ◄── DATELE VECHI RĂMÂN!                                 │   │
-    │   │ │ [1] 00  │                                                         │   │
-    │   │ │ [2] 0F  │ ◄── Address veche rămâne în memorie                     │   │
-    │   │ │ [3] 00  │                                                         │   │
-    │   │ │ [4] 03  │ ◄── ID vechi rămâne în memorie                          │   │
-    │   │ │ [5] 00  │                                                         │   │
-    │   │ │ [6] 01  │                                                         │   │
-    │   │ │ [7] 00  │                                                         │   │
-    │   │ └───────────────────────────────────────────────────────────────────┘   │
+    │   │ ┌────┬────┬────┬────┬────┬────┬────┬────┬────────────────────────────┐  │
+    │   │ │ 01 │ 00 │ 0F │ 00 │ 03 │ 00 │ 01 │ 00 │ 00 00 00 00 ... (0-uri)  │  │
+    │   │ └────┴────┴────┴────┴────┴────┴────┴────┴────────────────────────────┘  │
+    │   │  ▲                                                                       │
+    │   │  └── DATELE VECHI RĂMÂN! (dar nu contează, len=0)                       │
     │   │                                                                          │
-    │   │ recvBufferLen = 0;  ◄── DOAR LUNGIMEA E RESETATĂ                        │
+    │   │ recvBufferLen = 0  ◄── Resetat, buffer considerat gol                   │
     │   │                                                                          │
-    │   │ ⚠️ RISC: Dacă următorul pachet are length < 8, datele vechi             │
-    │   │          se vor combina cu cele noi → valori corupte                     │
+    │   │ ✓ La următorul pachet, datele noi vor suprascrie (începând de la [0])   │
+    │   │ ✓ CRC verificat - pachete corupte nu ajung în buffer                    │
+    │   └─────────────────────────────────────────────────────────────────────────┘
+    │
+    ▼
+```
+
+---
+
+## Scenariul cu Multiple Pachete în Buffer
+
+```
+TIMP (ms)
+    │
+T+0 │   Detector A transmite alarmă
+T+3 │   Detector B transmite alarmă (înainte ca FM să proceseze pe A)
+    │
+T+5 │   ┌─────────────────────────────────────────────────────────────────────────┐
+    │   │ ISR: packetWaiting = true (pentru pachetul A)                           │
+    │   └─────────────────────────────────────────────────────────────────────────┘
+    │
+T+8 │   ┌─────────────────────────────────────────────────────────────────────────┐
+    │   │ ISR: packetWaiting = true (pentru pachetul B, deja era true)            │
+    │   │ ⚠️  Pachetul B poate fi în FIFO CC1101 sau pierdut dacă FIFO e plin     │
+    │   └─────────────────────────────────────────────────────────────────────────┘
+    │
+T+10│   ┌─────────────────────────────────────────────────────────────────────────┐
+    │   │ cc1101Receive() procesează pachetul A                                   │
+    │   │                                                                          │
+    │   │ CommunicationService::receive():                                        │
+    │   │   - Citește pachetul A din FIFO CC1101                                  │
+    │   │   - buff[0..7] = pachet A                                               │
+    │   │   - *len = 8                                                            │
+    │   │                                                                          │
+    │   │ recvBuffer: [Pachet A (8 bytes)] [gol...]                               │
+    │   │ recvBufferLen: 8                                                        │
+    │   └─────────────────────────────────────────────────────────────────────────┘
+    │
+    │   Presupunem că CC1101 a primit și pachetul B în FIFO înainte de flush
+    │   (sau un nou interrupt vine rapid)
+    │
+T+15│   ┌─────────────────────────────────────────────────────────────────────────┐
+    │   │ cc1101Receive() procesează pachetul B                                   │
+    │   │                                                                          │
+    │   │ CommunicationService::receive():                                        │
+    │   │   - Citește pachetul B din FIFO CC1101                                  │
+    │   │   - buff[*len + 0..7] = buff[8..15] = pachet B                          │
+    │   │   - *len += 8 → *len = 16                                               │
+    │   │                                                                          │
+    │   │ recvBuffer: [Pachet A (8 bytes)][Pachet B (8 bytes)] [gol...]           │
+    │   │ recvBufferLen: 16                                                       │
+    │   │                                                                          │
+    │   │ ⚠️  BUFFER ACUMULATIV permite acest comportament!                       │
+    │   │     buff[*len + i] = packet.data[i];                                    │
+    │   │     *len += packet.length;                                              │
+    │   └─────────────────────────────────────────────────────────────────────────┘
+    │
+T+20│   ┌─────────────────────────────────────────────────────────────────────────┐
+    │   │ coreService.tick() procesează AMBELE pachete                            │
+    │   │                                                                          │
+    │   │ while(index < 16 && 16 > 7) {                                           │
+    │   │                                                                          │
+    │   │   // Prima iterație: index=0                                            │
+    │   │   Procesează Pachet A (bytes 0-7)                                       │
+    │   │   index += 8; // index = 8                                              │
+    │   │                                                                          │
+    │   │   // A doua iterație: index=8                                           │
+    │   │   Procesează Pachet B (bytes 8-15)                                      │
+    │   │   index += 8; // index = 16                                             │
+    │   │                                                                          │
+    │   │   // index=16 < 16 = false, ieșire din while                            │
+    │   │ }                                                                       │
+    │   │                                                                          │
+    │   │ *receiveBufferLen = 0;  // Reset după procesare completă                │
     │   └─────────────────────────────────────────────────────────────────────────┘
     │
     ▼
@@ -343,122 +557,121 @@ T+22│   ═══════════════════════�
 
 ## Scenariul Problematic: Cum Apare Address = 0
 
+### Cauza 1: numberOfAddressVerificationIntervals = 0
+
 ```
-TIMP (ms)
-    │
-T+0 │   ══════════════════════════════════════════════════════════════════════════
-    │   SITUAȚIE: Pachet RF trunchiat sau interferență
-    │
-    │   ┌─────────────────────────────────────────────────────────────────────────┐
-    │   │ CC1101 primește semnal RF corupt                                        │
-    │   │                                                                          │
-    │   │ RX FIFO CC1101 (parțial populat):                                       │
-    │   │ ┌─────────────────────────────────────────────────────────────────┐     │
-    │   │ │ LEN │ DATA                               │ RSSI │ LQI    │      │     │
-    │   │ │ 02  │ 01 00 │ ?? ?? │ ?? ?? │ ?? │ ??   │ -90  │ 20+BAD │      │     │
-    │   │ │     │ RECV  │ LIPSĂ │ LIPSĂ │LIPSĂ│LIPSĂ│ slab │ CRC NG │      │     │
-    │   │ └─────────────────────────────────────────────────────────────────┘     │
-    │   │                                                                          │
-    │   │ CRC FAIL dar GDO2 tot generează interrupt!                              │
-    │   └─────────────────────────────────────────────────────────────────────────┘
-    │
-T+5 │   ┌─────────────────────────────────────────────────────────────────────────┐
-    │   │ CC1101Controller::receiveData()                                         │
-    │   │                                                                          │
-    │   │ packet->length = 2;  (doar 2 bytes primiți)                             │
-    │   │ readBurstReg(packet->data, ..., 2);  ◄── Citește doar bytes 0-1         │
-    │   │                                                                          │
-    │   │ packet->crc_ok = false;  ◄── CRC invalid, DAR NU E VERIFICAT NICĂIERI!  │
-    │   │                                                                          │
-    │   │ CCPACKET.data[] după citire:                                            │
-    │   │ ┌─────────────────────────────────────────────────────────────────┐     │
-    │   │ │ [0] 01  │ ◄── Receiver LO (valid)                               │     │
-    │   │ │ [1] 00  │ ◄── Receiver HI (valid)                               │     │
-    │   │ │ [2] ??  │ ◄── Address LO - NEDEFINIT (valoare veche sau 0)      │     │
-    │   │ │ [3] ??  │ ◄── Address HI - NEDEFINIT                            │     │
-    │   │ │ [4] ??  │ ◄── ID LO - NEDEFINIT                                 │     │
-    │   │ │ [5] ??  │ ◄── ID HI - NEDEFINIT                                 │     │
-    │   │ │ [6] ??  │ ◄── Command - NEDEFINIT                               │     │
-    │   │ │ [7] ??  │ ◄── IsForward - NEDEFINIT                             │     │
-    │   │ └─────────────────────────────────────────────────────────────────┘     │
-    │   └─────────────────────────────────────────────────────────────────────────┘
-    │
-T+6 │   ┌─────────────────────────────────────────────────────────────────────────┐
-    │   │ CommunicationService::receive() copiază în recvBuffer                   │
-    │   │                                                                          │
-    │   │ VARIANTA A: Copiază doar length bytes                                   │
-    │   │ memcpy(recvBuffer, packet.data, packet.length);  // doar 2 bytes        │
-    │   │ recvBufferLen = 2;                                                      │
-    │   │                                                                          │
-    │   │ recvBuffer[] după copiere:                                              │
-    │   │ ┌─────────────────────────────────────────────────────────────────┐     │
-    │   │ │ [0] 01  │ ◄── NOU: Receiver LO                                  │     │
-    │   │ │ [1] 00  │ ◄── NOU: Receiver HI                                  │     │
-    │   │ │ [2] 0F  │ ◄── VECHI: Address LO de la pachetul anterior        │     │
-    │   │ │ [3] 00  │ ◄── VECHI                                            │     │
-    │   │ │ [4] 03  │ ◄── VECHI: ID de la pachetul anterior                │     │
-    │   │ │ [5] 00  │ ◄── VECHI                                            │     │
-    │   │ │ [6] 01  │ ◄── VECHI: Command de la pachetul anterior           │     │
-    │   │ │ [7] 00  │ ◄── VECHI                                            │     │
-    │   │ └─────────────────────────────────────────────────────────────────┘     │
-    │   │                                                                          │
-    │   │ VARIANTA B: Copiază tot (dacă implementare diferită)                    │
-    │   │ Dacă CCPACKET.data[] era inițializat cu 0:                              │
-    │   │ ┌─────────────────────────────────────────────────────────────────┐     │
-    │   │ │ [0] 01  │ ◄── Receiver LO                                       │     │
-    │   │ │ [1] 00  │ ◄── Receiver HI                                       │     │
-    │   │ │ [2] 00  │ ◄── Address LO = 0 (neinițializat)                    │     │
-    │   │ │ [3] 00  │ ◄── Address HI = 0                                    │     │
-    │   │ │ [4] 00  │ ◄── ID LO = 0                                         │     │
-    │   │ │ [5] 00  │ ◄── ID HI = 0                                         │     │
-    │   │ │ [6] 00  │ ◄── Command = 0                                       │     │
-    │   │ │ [7] 00  │ ◄── IsForward = 0                                     │     │
-    │   │ └─────────────────────────────────────────────────────────────────┘     │
-    │   └─────────────────────────────────────────────────────────────────────────┘
-    │
-T+15│   ┌─────────────────────────────────────────────────────────────────────────┐
-    │   │ CoreService::tick() - PROCESARE PACHET INVALID                          │
-    │   │                                                                          │
-    │   │ if (*receiveBufferLen > 0) {  ◄── len=2, trece verificarea!             │
-    │   │                                                                          │
-    │   │ ⚠️ BUG: Nu verifică len >= 8                                            │
-    │   │ ⚠️ BUG: Nu verifică CRC (info pierdută la copiere)                      │
-    │   │                                                                          │
-    │   │ operationModeMaster():                                                  │
-    │   │ - Citește recvBuffer[2-3] = 0x00 0x00 → address = 0                     │
-    │   │ - Citește recvBuffer[4-5] = 0x00 0x00 → id = 0                          │
-    │   │ - Citește recvBuffer[6] = 0x00 sau 0x01 → command                       │
-    │   │                                                                          │
-    │   │ REZULTAT: Alarmă stocată cu address=0, id=0                             │
-    │   └─────────────────────────────────────────────────────────────────────────┘
-    │
-    ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│ SITUAȚIE: Floor Module fără intervale de verificare configurate                 │
+│                                                                                  │
+│ La setup() [ergo-floor-module-v4.0.cpp:2500]:                                   │
+│     numberOfAddressVerificationIntervals = 0;  ◄── Inițializat cu 0             │
+│                                                                                  │
+│ La loadAddressVerificationIntervals() [ergo-floor-module-v4.0.cpp:2735-2739]:   │
+│     numberOfAddressVerificationIntervals = eepromController->                   │
+│         getNumberOfAddressVerificationIntervals();                              │
+│     // Dacă EEPROM-ul nu a fost configurat, returnează 0                        │
+│                                                                                  │
+│ REZULTAT:                                                                        │
+│ În operationModeMaster() [linia 2541]:                                          │
+│     if(numberOfAddressVerificationIntervals > 0) {  ◄── 0 > 0 = FALSE           │
+│         // Verificarea NU se execută!                                           │
+│     }                                                                            │
+│                                                                                  │
+│ → Orice adresă (inclusiv 0) TRECE fără verificare                               │
+│ → Dacă un detector trimite address=0 (EEPROM corupt), va fi acceptat            │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Cauza 2: Detector cu EEPROM Neprogramat/Corupt
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│ SITUAȚIE: Detector cu valori 0 în EEPROM                                        │
+│                                                                                  │
+│ În detector (fw-ergo-detector-source-v2.5.cpp):                                 │
+│                                                                                  │
+│ La citirea din EEPROM:                                                          │
+│     deviceAddress = eepromController->getUIntValue(EEPROM_CC1101_DEVICE_ADDRESS_INT); │
+│     deviceId = eepromController->getUIntValue(EEPROM_DEVICE_ID_INT);            │
+│                                                                                  │
+│ Dacă EEPROM nu a fost programat sau e corupt:                                   │
+│     deviceAddress = 0x0000 sau 0xFFFF (65535)                                   │
+│     deviceId = 0x0000 sau 0xFFFF (65535)                                        │
+│                                                                                  │
+│ La trimitere alarmă:                                                            │
+│     buff[BUFF_INDEX_ADDRESS_LO] = 0x00;                                         │
+│     buff[BUFF_INDEX_ADDRESS_HI] = 0x00;                                         │
+│     buff[BUFF_INDEX_ID_LO] = 0x00;                                              │
+│     buff[BUFF_INDEX_ID_HI] = 0x00;                                              │
+│                                                                                  │
+│ Floor Module primește pachet VALID (CRC OK) cu:                                 │
+│     address = 0                                                                 │
+│     id = 0                                                                      │
+│                                                                                  │
+│ → Pachetul trece verificarea CRC (date valide, doar valori greșite)             │
+│ → Dacă numberOfAddressVerificationIntervals=0, nu se filtrează                  │
+│ → Alarmă stocată cu address=0, id=0                                             │
+└─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Rezumat Locații Buffer
+## Rezumat Locații Buffer și Persistență
 
-| Buffer | Memorie | Dimensiune | Persistență | Risc |
-|--------|---------|------------|-------------|------|
-| CC1101 RX FIFO | Hardware CC1101 | 64 bytes | Până la citire | Corupție RF |
-| CC1101 TX FIFO | Hardware CC1101 | 64 bytes | Până la transmisie | - |
-| CCPACKET.data | RAM MCU (stack) | 30 bytes | Doar în funcție | Neinițializat |
-| `recvBuffer` | RAM MCU (global) | 100 bytes | Permanent | **Date vechi rămân** |
-| `sendBuffer` | RAM MCU (global) | 15 bytes | Permanent | - |
-| Alarme | SRAM 23LC512 | 6050 bytes | Runtime | Se pierde la reset |
-| Detectoare | SRAM 23LC512 | 48000 bytes | Runtime | Se pierde la reset |
-| Config | EEPROM I2C | 512 bytes | Permanent | - |
-
----
-
-## Puncte Critice Identificate
-
-1. **`recvBuffer` nu e curățat** - Doar `recvBufferLen` e resetat, datele vechi persistă
-2. **CRC nu e verificat** - `packet.crc_ok` e ignorat la procesare
-3. **Lungime minimă nu e validată** - Se procesează pachete cu len < 8
-4. **`CCPACKET.data[]` nu e inițializat** - Poate conține 0-uri sau garbage
+| Buffer | Memorie | Dimensiune | Locație în Cod | Persistență |
+|--------|---------|------------|----------------|-------------|
+| CC1101 RX FIFO | Hardware CC1101 | 64 bytes | (modul extern) | Până la citire+flush |
+| CC1101 TX FIFO | Hardware CC1101 | 64 bytes | (modul extern) | Până la transmisie |
+| CCPACKET packet | RAM MCU | ~34 bytes | :654 (membru clasă) | Permanent |
+| `recvBuffer` | RAM MCU global | 100 bytes | :962 | Permanent |
+| `sendBuffer` | RAM MCU global | 15 bytes | :962 | Permanent |
+| `recvBufferLen` | RAM MCU global | 1 byte | :963 | Permanent |
+| Alarme | SRAM 23LC512 | 6050 bytes | SPI CS=pin 15 | Runtime (volatil) |
+| Detectoare | SRAM 23LC512 | 48000 bytes | SPI CS=pin 15 | Runtime (volatil) |
+| Config | EEPROM 24LC04B | 512 bytes | I2C | Permanent |
 
 ---
 
-*Document generat pentru analiza fluxului de date în sistemul ERGO26 Floor Module.*
+## Puncte Importante din Codul Legacy v4.0
+
+### ✓ CE FUNCȚIONEAZĂ CORECT
+
+1. **CRC este verificat** (linia 2425):
+   ```cpp
+   if (packet.crc_ok && packet.length > 0) {
+       // Doar pachetele cu CRC valid sunt copiate în buffer
+   }
+   ```
+
+2. **Lungimea minimă este verificată** (linia 2536):
+   ```cpp
+   while(index < *receiveBufferLen && *receiveBufferLen > 7) {
+       // Procesează doar dacă avem minim 8 bytes
+   }
+   ```
+
+3. **Buffer-ul este resetat după procesare** (linia 2585):
+   ```cpp
+   *receiveBufferLen = 0;
+   ```
+
+### ⚠️ CE POATE CAUZA PROBLEMA CU ADDRESS=0
+
+1. **Verificarea intervalelor este opțională** (linia 2541):
+   ```cpp
+   if(numberOfAddressVerificationIntervals > 0) {
+       // Dacă e 0, verificarea NU se face deloc!
+   }
+   ```
+
+2. **Nu există validare că address != 0**:
+   ```cpp
+   // Lipsește:
+   // if(alarmEntry.address == 0) { skip; }
+   ```
+
+3. **Detector cu EEPROM neprogramat/corupt** poate trimite valori valide dar greșite (address=0, id=0).
+
+---
+
+*Document generat din analiza fișierului ergo-floor-module-v4.0.cpp (cod în producție).*
